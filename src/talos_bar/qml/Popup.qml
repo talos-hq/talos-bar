@@ -47,13 +47,20 @@ Window {
             : win.pad
         width: implicitWidth
         height: implicitHeight
+        roomLeft: x
+        roomRight: win.width - x - width
+        onSideRectChanged: win.updateMask()
         onXChanged: win.updateMask()
         onWidthChanged: win.updateMask()
         onHeightChanged: win.updateMask()
         onYChanged: win.updateMask()
     }
     function updateMask() {
-        if (spansScreen) bar.setInputRect(win, frame.x, frame.y, frame.width, frame.height);
+        if (!spansScreen) return;
+        const rects = [Qt.rect(frame.x, frame.y, frame.width, frame.height)];
+        const side = frame.sideRect;
+        if (side) rects.push(Qt.rect(frame.x + side.x, frame.y + side.y, side.width, side.height));
+        bar.setInputRects(win, rects);
     }
     Shortcut { sequence: "Escape"; onActivated: win.dismissed() }
 }

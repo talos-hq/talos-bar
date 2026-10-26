@@ -8,7 +8,16 @@ Item {
     property bool shown: false
     property string itemId: ""
     property var content: ({})
-    readonly property bool hovered: hover.hovered
+    // Room beside the frame inside the popup surface, for side panels.
+    property real roomLeft: 0
+    property real roomRight: 0
+    // A component may draw a side panel outside its own bounds (the agenda's
+    // meeting details); it reports it as `sideRect` and `sideHovered`.
+    readonly property var sideRect: loader.item && loader.item.sideRect
+        ? Qt.rect(loader.x + loader.item.sideRect.x, loader.y + loader.item.sideRect.y,
+                  loader.item.sideRect.width, loader.item.sideRect.height)
+        : null
+    readonly property bool hovered: hover.hovered || !!(loader.item && loader.item.sideHovered)
     readonly property bool animating: anim.running
     implicitWidth: loader.implicitWidth + 24
     implicitHeight: loader.implicitHeight + 24
@@ -40,6 +49,8 @@ Item {
         // Components read `content` and `itemId`, and call bar.action().
         property var content: frame.content
         property string itemId: frame.itemId
+        property real roomLeft: frame.roomLeft + 12
+        property real roomRight: frame.roomRight + 12
     }
     HoverHandler { id: hover }
 }

@@ -13,6 +13,7 @@ from PySide6.QtCore import (
     Property,
     QFileSystemWatcher,
     QObject,
+    QRectF,
     QRunnable,
     QSize,
     QThreadPool,
@@ -262,10 +263,13 @@ class Bar(QObject):
             self._focus = False
             self.popupChanged.emit()
 
-    @Slot(QWindow, int, int, int, int)
-    def setInputRect(self, window: QWindow, x: int, y: int, w: int, h: int) -> None:
-        """Limit pointer input to the drawn popup on a screen-wide surface."""
-        window.setMask(QRegion(x, y, w, h))
+    @Slot(QWindow, list)
+    def setInputRects(self, window: QWindow, rects: list[QRectF]) -> None:
+        """Limit pointer input to the drawn popup parts on a screen-wide surface."""
+        region = QRegion()
+        for r in rects:
+            region = region.united(r.toAlignedRect())
+        window.setMask(region)
 
     @Slot(str, str, str)
     def action(self, item_id: str, name: str, payload: str) -> None:
