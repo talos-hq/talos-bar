@@ -20,7 +20,7 @@
           build-system = [ pkgs.python3Packages.hatchling ];
           # nixpkgs ships PySide6 as one package; the PyPI split name is not provided.
           pythonRemoveDeps = [ "pyside6-essentials" ];
-          dependencies = [ pkgs.python3Packages.pyside6 ];
+          dependencies = with pkgs.python3Packages; [ pyside6 icalendar markdown-it-py ];
           nativeBuildInputs = [ pkgs.qt6.wrapQtAppsHook ];
           buildInputs = [ pkgs.qt6.qtbase pkgs.qt6.qtsvg pkgs.qt6.qtdeclarative pkgs.qt6.qtwayland pkgs.kdePackages.layer-shell-qt ];
           dontWrapQtApps = true;
@@ -38,7 +38,7 @@
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
           packages = [
-            (pkgs.python3.withPackages (ps: [ ps.pyside6 ps.pytest ]))
+            (pkgs.python3.withPackages (ps: [ ps.pyside6 ps.icalendar ps.markdown-it-py ps.pytest ]))
             pkgs.qt6.qtwayland
             pkgs.kdePackages.layer-shell-qt
             pkgs.uv

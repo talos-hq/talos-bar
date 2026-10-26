@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from talos_bar import glue
@@ -26,3 +27,8 @@ def test_broken_glue_is_isolated(tmp_path: Path) -> None:
 def test_example_glue_loads() -> None:
     example = Path(__file__).parent.parent / "docs" / "examples" / "hello.py"
     assert [i.id for i in glue.load_file(example)] == ["hello"]
+
+
+def test_run_script_captures_stdout() -> None:
+    out = glue.run_script("calendar_agenda")
+    assert "next_label" in json.loads(out)
