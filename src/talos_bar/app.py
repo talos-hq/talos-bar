@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -19,11 +20,11 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import QGuiApplication, QWindow
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, QQmlError
 
 from talos_bar import glue, platform
 
-QML = Path(__file__).parent / "qml" / "Bar.qml"
+QML_DIR = Path(__file__).parent / "qml"
 
 
 class _Job(QRunnable):
@@ -123,14 +124,23 @@ class Bar(QObject):
         self._pool.start(_Job(self, it, clicked))
 
 
+def _print_warnings(warnings: list[QQmlError]) -> None:
+    for w in warnings:
+        print(f"qml: {w.toString()}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
+    qml = QML_DIR / platform.prepare()
     app = QGuiApplication(argv or sys.argv)
     app.setApplicationName("talos-bar")
     bar = Bar()
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("bar", bar)
-    engine.load(QUrl.fromLocalFile(str(QML)))
+    engine.rootContext().setContextProperty("barAlign", os.environ.get("TALOS_BAR_ALIGN", "right"))
+    engine.warnings.connect(_print_warnings)
+    engine.load(QUrl.fromLocalFile(str(qml)))
     if not engine.rootObjects():
+        print(f"talos-bar: failed to load {qml}", file=sys.stderr)
         return 1
     root = engine.rootObjects()[0]
     assert isinstance(root, QWindow)

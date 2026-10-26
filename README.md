@@ -28,5 +28,19 @@ uv run pytest
 Glue lives in `src/talos_bar/glue/builtin/` and `~/.config/talos-bar/glue/`.
 Edit a glue file while the bar runs and it reloads.
 
-On NixOS the PyPI PySide6 wheel needs system libraries (libstdc++, zlib,
-krb5, xcb-*) on `LD_LIBRARY_PATH`; a Nix dev shell for this is still to do.
+### NixOS
+
+The PyPI PySide6 wheel does not run on NixOS. Use the flake, which builds
+against nixpkgs' Qt and layer-shell-qt:
+
+```sh
+nix run .#talos-bar                         # packaged build
+nix develop -c python -m talos_bar          # dev loop: edit src/, rerun
+TALOS_BAR_ALIGN=center nix run .#talos-bar  # left | center | right (default)
+```
+
+On Wayland the bar is a layer-shell surface on the primary screen: it stays
+above windows and reserves its height. It defaults to the top right so it can
+run next to the centred Plasma top panel. The wrapper clears the session's
+`QT_PLUGIN_PATH`/`QML2_IMPORT_PATH`, because Plasma exports paths for its own
+Qt version and loading them aborts QtQuick.
