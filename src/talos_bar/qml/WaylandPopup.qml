@@ -15,5 +15,7 @@ Popup {
     LayerShell.Window.layer: LayerShell.Window.LayerOverlay
     LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft | LayerShell.Window.AnchorRight
     LayerShell.Window.exclusionZone: -1
-    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityOnDemand
+    LayerShell.Window.keyboardInteractivity: focusable
+        ? LayerShell.Window.KeyboardInteractivityOnDemand
+        : LayerShell.Window.KeyboardInteractivityNone
 }
