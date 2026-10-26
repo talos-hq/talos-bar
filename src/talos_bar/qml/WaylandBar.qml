@@ -12,6 +12,6 @@ Bar {
     LayerShell.Window.anchors: LayerShell.Window.AnchorTop
         | (barAlign === "left" ? LayerShell.Window.AnchorLeft : 0)
         | (barAlign === "right" ? LayerShell.Window.AnchorRight : 0)
-    LayerShell.Window.exclusionZone: height
+    LayerShell.Window.exclusionZone: Theme.barHeight
     LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
 }

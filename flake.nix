@@ -22,7 +22,7 @@
           pythonRemoveDeps = [ "pyside6-essentials" ];
           dependencies = [ pkgs.python3Packages.pyside6 ];
           nativeBuildInputs = [ pkgs.qt6.wrapQtAppsHook ];
-          buildInputs = [ pkgs.qt6.qtbase pkgs.qt6.qtdeclarative pkgs.qt6.qtwayland pkgs.kdePackages.layer-shell-qt ];
+          buildInputs = [ pkgs.qt6.qtbase pkgs.qt6.qtsvg pkgs.qt6.qtdeclarative pkgs.qt6.qtwayland pkgs.kdePackages.layer-shell-qt ];
           dontWrapQtApps = true;
           # The Plasma session exports its own Qt's QML/plugin paths; a different
           # Qt version loading those aborts QtQuick, so drop them first.
@@ -45,7 +45,7 @@
           ];
           shellHook = ''
             unset ${builtins.concatStringsSep " " qtEnv}
-            export QT_PLUGIN_PATH=${pkgs.qt6.qtbase}/${pkgs.qt6.qtbase.qtPluginPrefix}:${pkgs.qt6.qtwayland}/${pkgs.qt6.qtbase.qtPluginPrefix}:${pkgs.kdePackages.layer-shell-qt}/${pkgs.qt6.qtbase.qtPluginPrefix}
+            export QT_PLUGIN_PATH=${pkgs.qt6.qtbase}/${pkgs.qt6.qtbase.qtPluginPrefix}:${pkgs.qt6.qtsvg}/${pkgs.qt6.qtbase.qtPluginPrefix}:${pkgs.qt6.qtwayland}/${pkgs.qt6.qtbase.qtPluginPrefix}:${pkgs.kdePackages.layer-shell-qt}/${pkgs.qt6.qtbase.qtPluginPrefix}
             export QML_IMPORT_PATH=${pkgs.qt6.qtdeclarative}/${pkgs.qt6.qtbase.qtQmlPrefix}:${pkgs.kdePackages.layer-shell-qt}/${pkgs.qt6.qtbase.qtQmlPrefix}
             export PYTHONPATH=$PWD/src''${PYTHONPATH:+:$PYTHONPATH}
           '';

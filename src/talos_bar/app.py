@@ -13,14 +13,16 @@ from PySide6.QtCore import (
     QFileSystemWatcher,
     QObject,
     QRunnable,
+    QSize,
     QThreadPool,
     QTimer,
     QUrl,
     Signal,
     Slot,
 )
-from PySide6.QtGui import QGuiApplication, QWindow
-from PySide6.QtQml import QQmlApplicationEngine, QQmlError
+from PySide6.QtGui import QFont, QGuiApplication, QIcon, QPixmap, QWindow
+from PySide6.QtQml import QQmlApplicationEngine, QQmlError, QQmlImageProviderBase
+from PySide6.QtQuick import QQuickImageProvider
 
 from talos_bar import glue, platform
 
@@ -39,6 +41,49 @@ class _Job(QRunnable):
         except Exception:
             traceback.print_exc()
             self.bar.result.emit(self.item.id, "", True)
+
+
+def _blank_view(it: glue.Item) -> dict[str, object]:
+    return {"id": it.id, "text": it.label, "subtext": "", "icon": "", "tooltip": "", "error": False}
+
+
+class IconProvider(QQuickImageProvider):
+    """``image://icon/<name>``: freedesktop theme icons for QML."""
+
+    def __init__(self) -> None:
+        super().__init__(QQmlImageProviderBase.ImageType.Pixmap)
+
+    def requestPixmap(self, id: str, size: QSize, requestedSize: QSize) -> QPixmap:
+        side = max(requestedSize.width(), requestedSize.height(), 16)
+        pix = QIcon.fromTheme(id).pixmap(side, side)
+        size.setWidth(pix.width())
+        size.setHeight(pix.height())
+        return pix
+
+
+def _kde_font() -> QFont | None:
+    """The Plasma UI font from kdeglobals (``font=Family,10,...``), if set."""
+    path = Path.home() / ".config" / "kdeglobals"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("font="):
+            family, _, rest = line[5:].partition(",")
+            size = rest.split(",", 1)[0]
+            return QFont(family, int(size) if size.isdigit() else 10)
+    return None
+
+
+def _use_desktop_theme(app: QGuiApplication) -> None:
+    # A bare Qt app on Plasma gets neither the UI font nor the icon theme;
+    # take the same ones the panel uses, falling back quietly elsewhere.
+    font = _kde_font()
+    if font is not None:
+        app.setFont(font)
+    if not QIcon.themeName() or QIcon.themeName() == "hicolor":
+        QIcon.setThemeName("breeze-dark")
 
 
 class Bar(QObject):
@@ -60,7 +105,8 @@ class Bar(QObject):
 
     @Property(list, notify=itemsChanged)  # pyright: ignore[reportArgumentType]
     def items(self) -> list[dict[str, object]]:
-        return [self._view[i] for i in self._items]
+        ordered = sorted(self._items.values(), key=lambda i: (i.order, i.id))
+        return [self._view[i.id] for i in ordered]
 
     @Slot(str)
     def _changed(self, _path: str) -> None:
@@ -81,7 +127,8 @@ class Bar(QObject):
             self._watch.addPath(str(f))
             for it in glue.load_file(f):
                 self._items[it.id] = it
-                self._view.setdefault(it.id, {"id": it.id, "text": it.label, "tooltip": "", "error": False})
+                v = self._view.setdefault(it.id, _blank_view(it))
+                v["plain"] = it.plain
                 self._schedule(it)
         self.itemsChanged.emit()
 
@@ -105,6 +152,8 @@ class Bar(QObject):
         if isinstance(out, dict):
             rich = cast("glue.Rich", out)
             v["text"] = rich.get("text", str(v["text"]))
+            v["subtext"] = rich.get("subtext", "")
+            v["icon"] = rich.get("icon", "")
             v["tooltip"] = rich.get("tooltip", "")
         elif not error:
             v["text"] = str(out)
@@ -133,8 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     qml = QML_DIR / platform.prepare()
     app = QGuiApplication(argv or sys.argv)
     app.setApplicationName("talos-bar")
+    _use_desktop_theme(app)
     bar = Bar()
     engine = QQmlApplicationEngine()
+    engine.addImageProvider("icon", IconProvider())
     engine.rootContext().setContextProperty("bar", bar)
     engine.rootContext().setContextProperty("barAlign", os.environ.get("TALOS_BAR_ALIGN", "right"))
     engine.warnings.connect(_print_warnings)
@@ -144,5 +195,5 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     root = engine.rootObjects()[0]
     assert isinstance(root, QWindow)
-    platform.dock(root, height=36)
+    platform.dock(root)
     return app.exec()
