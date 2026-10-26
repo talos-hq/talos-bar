@@ -55,6 +55,13 @@ Item {
             Layout.preferredWidth: 16
             Layout.preferredHeight: 16
         }
+        Rectangle {
+            visible: !!tab.model.dot
+            Layout.preferredWidth: 7
+            Layout.preferredHeight: 7
+            radius: 3.5
+            color: tab.model.dot || "transparent"
+        }
         ColumnLayout {
             spacing: -2
             Label {
