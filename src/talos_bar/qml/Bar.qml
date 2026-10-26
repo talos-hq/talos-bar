@@ -35,7 +35,10 @@ Window {
     }
 
     property Item openTab: null
-    property bool tabsHovered: false
+    // The tab under the pointer. One shared flag would be cleared by the
+    // tab being left after the next one reported it was entered.
+    property Item hoveredTab: null
+    readonly property bool tabsHovered: hoveredTab !== null
 
     Row {
         id: row
@@ -53,7 +56,9 @@ Window {
                 onExpandedChanged: if (expanded) root.openTab = tab
                 onActivated: bar.click(modelData.id)
                 onHoveredChanged: {
-                    root.tabsHovered = hovered;
+                    if (hovered) root.hoveredTab = tab;
+                    else if (root.hoveredTab === tab) root.hoveredTab = null;
+                    root.tipCheck();
                     // Hover popups open on entry; with any popup open, moving
                     // across tabs switches to the hovered one, menubar-style.
                     if (hovered && modelData.expandable && (modelData.hover || bar.openId !== ""))
@@ -64,8 +69,9 @@ Window {
         }
     }
 
-    // Hover popups close once the pointer has left both tab and popup; the
-    // delay lets it cross the gap between the two surfaces.
+    // A popup the user did not click open (hover-opened, or switched to by
+    // moving across tabs) closes once the pointer has left both tab and
+    // popup; the delay lets it cross the gap between the two surfaces.
     function hoverCheck() {
         if (root.tabsHovered || popupLoader.item && popupLoader.item.hovered) closeTimer.stop();
         else closeTimer.restart();
@@ -74,8 +80,8 @@ Window {
         id: closeTimer
         interval: 150
         onTriggered: {
-            const open = bar.items.find(i => i.id === bar.openId);
-            if (open && open.hover && !bar.popupFocus && !root.tabsHovered && !(popupLoader.item && popupLoader.item.hovered)) bar.close();
+            if (bar.openId !== "" && !bar.popupFocus && !root.tabsHovered
+                && !(popupLoader.item && popupLoader.item.hovered)) bar.close();
         }
     }
 
@@ -91,6 +97,58 @@ Window {
             item.anchorX = Qt.binding(() => root.openTab ? root.screenX + root.openTab.x + row.x + root.openTab.width / 2 : 0);
             item.dismissed.connect(() => bar.close());
             item.hoveredChanged.connect(root.hoverCheck);
+        }
+    }
+
+    // ── Tooltips ──
+    // Drawn in their own overlay surface: the bar's surface is only as tall
+    // as the bar, and Controls' in-window ToolTip neither fits it nor goes
+    // away reliably when the pointer leaves for another output or window.
+    property Item tipTab: null
+    readonly property bool tipShown: tipTab !== null && bar.openId === ""
+    function tipCheck() {
+        const tab = root.hoveredTab;
+        if (tab && tab.model.tooltip !== "" && bar.openId === "") {
+            tipHideTimer.stop();
+            if (tab !== root.tipTab) { root.tipTab = null; tipTimer.restart(); }
+        } else if (root.tipTab && tipLoader.item && tipLoader.item.hovered) {
+            tipHideTimer.stop();  // the pointer moved into the pop-in
+        } else {
+            tipTimer.stop();
+            tipHideTimer.restart();
+        }
+    }
+    function showTip(itemId) {
+        for (let i = 0; i < row.children.length; i++) {
+            const tab = row.children[i];
+            if (tab.model && tab.model.id === itemId) root.tipTab = tab;
+        }
+    }
+    Timer {
+        id: tipTimer
+        interval: 500
+        onTriggered: root.tipTab = root.hoveredTab
+    }
+    // Same 150 ms handoff as popups, so the pointer can reach the pop-in.
+    Timer {
+        id: tipHideTimer
+        interval: 150
+        onTriggered: if (!root.hoveredTab && !(tipLoader.item && tipLoader.item.hovered)) root.tipTab = null
+    }
+    Loader {
+        id: tipLoader
+        source: layerShell ? "WaylandPopup.qml" : "Popup.qml"
+        onLoaded: {
+            item.screen = Qt.binding(() => root.screen);
+            item.shown = Qt.binding(() => root.tipShown);
+            item.itemId = Qt.binding(() => root.tipTab ? root.tipTab.model.id : "");
+            item.content = Qt.binding(() => ({
+                component: Qt.resolvedUrl("TipBody.qml"),
+                text: root.tipTab ? root.tipTab.model.tooltip : "",
+                clickable: !!(root.tipTab && root.tipTab.model.expandable)
+            }));
+            item.hoveredChanged.connect(root.tipCheck);
+            item.anchorX = Qt.binding(() => root.tipTab ? root.screenX + root.tipTab.x + row.x + root.tipTab.width / 2 : 0);
         }
     }
 }
