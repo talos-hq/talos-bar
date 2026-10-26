@@ -1,36 +1,45 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 
 Window {
     id: root
     visible: false
     color: "transparent"
-    width: row.implicitWidth + 32
-    height: 36
+    // The window is larger than the strip by the shadow's reach; the
+    // compositor still reserves only barHeight (see WaylandBar.qml).
+    width: row.implicitWidth + 16 + Theme.shadowPad * 2
+    height: Theme.barHeight + Theme.shadowPad
 
     Rectangle {
-        anchors.fill: parent
-        radius: 8
-        color: Qt.rgba(0.08, 0.09, 0.11, 0.7)
-        border.color: Qt.rgba(1, 1, 1, 0.08)
+        id: panel
+        x: Theme.shadowPad
+        width: parent.width - Theme.shadowPad * 2
+        height: Theme.barHeight
+        radius: Theme.radius
+        color: Qt.alpha(Theme.window, Theme.panelOpacity)
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: "#000000"
+            shadowOpacity: 0.45
+            shadowBlur: 0.6
+            shadowVerticalOffset: 2
+        }
     }
 
     Row {
         id: row
-        anchors.centerIn: parent
-        spacing: 20
+        x: Theme.shadowPad + 8
+        height: Theme.barHeight
+        spacing: 2
 
         Repeater {
             model: bar.items
-            delegate: Label {
+            delegate: Tab {
                 required property var modelData
-                text: modelData.text
-                color: modelData.error ? "#ff6b6b" : "#e8e8ea"
-                font.pixelSize: 14
-                ToolTip.visible: modelData.tooltip !== "" && hover.hovered
-                ToolTip.text: modelData.tooltip
-                HoverHandler { id: hover }
-                TapHandler { onTapped: bar.click(modelData.id) }
+                model: modelData
+                onActivated: bar.click(modelData.id)
             }
         }
     }

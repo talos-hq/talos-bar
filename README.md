@@ -25,7 +25,8 @@ uv run basedpyright         # strict mode
 uv run pytest
 ```
 
-Glue lives in `src/talos_bar/glue/builtin/` and `~/.config/talos-bar/glue/`.
+Glue lives in `src/talos_bar/glue/builtin/` and `~/.config/talos-bar/glue/`;
+`docs/examples/hello.py` is a minimal example.
 Edit a glue file while the bar runs and it reloads.
 
 ### NixOS

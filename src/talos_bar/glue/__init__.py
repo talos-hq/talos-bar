@@ -22,6 +22,8 @@ from typing import Any, TypedDict
 
 class Rich(TypedDict, total=False):
     text: str
+    subtext: str  # a smaller second line under text (the clock's date)
+    icon: str  # freedesktop icon name, e.g. "view-calendar-agenda"
     tooltip: str
 
 
@@ -39,6 +41,8 @@ class Item:
     click: ClickFn | None = None
     platforms: frozenset[str] | None = None
     source: Path | None = None
+    order: int = 100  # left to right, lowest first
+    plain: bool = False  # bare text like the clock, not a highlighted tab
 
 
 @dataclass
@@ -52,10 +56,18 @@ _registry: dict[str, Item] = {}
 _intervals: dict[int, float] = {}
 
 
-def item(id: str, label: str = "", platforms: set[str] | None = None) -> Callable[[RefreshFn], RefreshFn]:
+def item(
+    id: str,
+    label: str = "",
+    platforms: set[str] | None = None,
+    order: int = 100,
+    plain: bool = False,
+) -> Callable[[RefreshFn], RefreshFn]:
     def deco(fn: RefreshFn) -> RefreshFn:
         it = _registry.setdefault(id, Item(id=id, label=label or id))
         it.refresh = fn
+        it.order = order
+        it.plain = plain
         it.interval = _intervals.get(id_of(fn), it.interval)
         it.platforms = frozenset(platforms) if platforms else None
         return fn

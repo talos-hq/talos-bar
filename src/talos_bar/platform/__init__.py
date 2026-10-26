@@ -36,8 +36,7 @@ def prepare() -> str:
     return "Bar.qml"
 
 
-def dock(window: QWindow, height: int) -> None:
-    window.setHeight(height)
+def dock(window: QWindow) -> None:
     screen = QGuiApplication.primaryScreen()
     window.setScreen(screen)
     if QGuiApplication.platformName() == "wayland" and use_layer_shell():
