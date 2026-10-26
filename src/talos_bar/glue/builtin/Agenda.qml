@@ -4,11 +4,14 @@ import QtQuick.Layouts
 import "../../qml"
 
 // Today's meetings: a port of the org.niteris.calendar-agenda plasmoid. The
-// list is on the left, the hovered (or clicked) meeting's full details on the
-// right; the details always show something, so the popup keeps one width.
-RowLayout {
+// list stays under its tab; a hovered (or clicked) meeting's full details
+// slide out beside it as a side panel, drawn outside this item's bounds on
+// whichever side has room (PopupFrame.roomLeft/roomRight), as SidePopup.qml
+// does in the plasmoid.
+Item {
     id: root
-    spacing: 12
+    implicitWidth: list.implicitWidth
+    implicitHeight: list.implicitHeight
     readonly property var agenda: parent ? parent.content : ({})
     readonly property var events: agenda.events || []
     readonly property var done: agenda.done || []
@@ -20,10 +23,13 @@ RowLayout {
     readonly property bool showDone: doneOpen || events.length === 0
     property var focusRow: null
     property var pinnedRow: null
-    readonly property var shownRow: pinnedRow || focusRow || agenda.next
-        || (events.length > 0 ? events[0] : null)
-        || (done.length > 0 ? done[done.length - 1] : null)
-        || (tomorrow.length > 0 ? tomorrow[0] : null)
+    readonly property var shownRow: pinnedRow || focusRow
+    readonly property real roomLeft: parent ? parent.roomLeft : 0
+    readonly property real roomRight: parent ? parent.roomRight : 0
+    readonly property int sideWidth: 380
+    // Read by PopupFrame: the side panel's area (for input) and hover.
+    readonly property var sideRect: details.visible ? Qt.rect(details.x, details.y, details.width, details.height) : null
+    readonly property bool sideHovered: detailsHover.hovered
 
     readonly property color link: Qt.rgba(41 / 255, 128 / 255, 185 / 255, 1).lighter(1.35)
     readonly property color positive: "#27ae60"
@@ -57,8 +63,8 @@ RowLayout {
 
     // ── The list ──
     ColumnLayout {
-        Layout.preferredWidth: root.empty ? 240 : 440
-        Layout.alignment: Qt.AlignTop
+        id: list
+        width: root.empty ? 240 : 440
         spacing: 10
 
         RowLayout {
@@ -195,16 +201,23 @@ RowLayout {
         }
     }
 
-    // ── Full details of the hovered or pinned meeting ──
+    // ── Full details of the hovered or pinned meeting, beside the list ──
     Rectangle {
+        id: details
+        // Right of the list when it fits, else left; the list never moves.
+        readonly property bool onRight: root.roomRight >= root.sideWidth + 24 || root.roomLeft < root.sideWidth + 24
         visible: !root.empty && root.shownRow !== null
-        Layout.preferredWidth: 380
-        Layout.fillHeight: true
-        Layout.minimumHeight: 200
+        width: root.sideWidth
+        height: Math.max(root.height, 200)
+        x: onRight ? root.width + 24 : -root.sideWidth - 24
+        y: -12
         radius: 8
-        color: Qt.alpha(Theme.highlight, 0.08)
+        color: Theme.window
         border.width: 1
         border.color: Qt.alpha(Theme.highlight, 0.35)
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        HoverHandler { id: detailsHover }
         ScrollView {
             anchors.fill: parent
             anchors.margins: 12
