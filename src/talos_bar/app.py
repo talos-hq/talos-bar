@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from PySide6.QtCore import (
     Property,
@@ -20,7 +21,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QFont, QGuiApplication, QIcon, QPixmap, QWindow
+from PySide6.QtGui import QFont, QGuiApplication, QIcon, QPixmap, QRegion, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlError, QQmlImageProviderBase
 from PySide6.QtQuick import QQuickImageProvider
 
@@ -30,21 +31,33 @@ QML_DIR = Path(__file__).parent / "qml"
 
 
 class _Job(QRunnable):
-    def __init__(self, bar: Bar, item: glue.Item, fn: glue.RefreshFn) -> None:
+    """Runs one glue call on the pool and posts its result back as `kind`."""
+
+    def __init__(self, bar: Bar, item_id: str, kind: str, fn: Callable[[glue.Context], object]) -> None:
         super().__init__()
-        self.bar, self.item, self.fn = bar, item, fn
+        self.bar, self.item_id, self.kind, self.fn = bar, item_id, kind, fn
 
     def run(self) -> None:
         try:
             out = self.fn(self.bar.ctx)
-            self.bar.result.emit(self.item.id, out if out is not None else "", False)
+            self.bar.result.emit(self.item_id, self.kind, out if out is not None else "", False)
         except Exception:
             traceback.print_exc()
-            self.bar.result.emit(self.item.id, "", True)
+            self.bar.result.emit(self.item_id, self.kind, "", True)
 
 
 def _blank_view(it: glue.Item) -> dict[str, object]:
-    return {"id": it.id, "text": it.label, "subtext": "", "icon": "", "tooltip": "", "error": False}
+    return {
+        "id": it.id,
+        "text": it.label,
+        "subtext": "",
+        "icon": "",
+        "tooltip": "",
+        "error": False,
+        "plain": it.plain,
+        "expandable": it.popup is not None,
+        "hover": it.hover,
+    }
 
 
 class IconProvider(QQuickImageProvider):
@@ -88,7 +101,8 @@ def _use_desktop_theme(app: QGuiApplication) -> None:
 
 class Bar(QObject):
     itemsChanged = Signal()
-    result = Signal(str, object, bool)
+    popupChanged = Signal()
+    result = Signal(str, str, object, bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -97,6 +111,8 @@ class Bar(QObject):
         self._view: dict[str, dict[str, object]] = {}
         self._timers: dict[str, QTimer] = {}
         self._pool = QThreadPool.globalInstance()
+        self._open = ""  # id of the item whose popup is showing
+        self._popup: dict[str, Any] = {}
         self.result.connect(self._on_result)
         self._watch = QFileSystemWatcher(self)
         self._watch.directoryChanged.connect(self._changed)
@@ -107,6 +123,14 @@ class Bar(QObject):
     def items(self) -> list[dict[str, object]]:
         ordered = sorted(self._items.values(), key=lambda i: (i.order, i.id))
         return [self._view[i.id] for i in ordered]
+
+    @Property(str, notify=popupChanged)  # pyright: ignore[reportArgumentType]
+    def openId(self) -> str:
+        return self._open
+
+    @Property("QVariantMap", notify=popupChanged)  # pyright: ignore[reportArgumentType]
+    def popup(self) -> dict[str, Any]:
+        return self._popup
 
     @Slot(str)
     def _changed(self, _path: str) -> None:
@@ -128,8 +152,10 @@ class Bar(QObject):
             for it in glue.load_file(f):
                 self._items[it.id] = it
                 v = self._view.setdefault(it.id, _blank_view(it))
-                v["plain"] = it.plain
+                v.update(plain=it.plain, expandable=it.popup is not None, hover=it.hover)
                 self._schedule(it)
+        if self._open not in self._items:
+            self.close()
         self.itemsChanged.emit()
 
     def _schedule(self, it: glue.Item) -> None:
@@ -137,15 +163,25 @@ class Bar(QObject):
             return
         t = QTimer(self)
         t.setInterval(int(it.interval * 1000))
-        refresh = it.refresh
-        t.timeout.connect(lambda: self._pool.start(_Job(self, it, refresh)))
+        t.timeout.connect(lambda: self._tick(it))
         t.start()
         self._timers[it.id] = t
-        self._pool.start(_Job(self, it, refresh))
+        self._tick(it)
 
-    @Slot(str, object, bool)
-    def _on_result(self, item_id: str, out: object, error: bool) -> None:
+    def _tick(self, it: glue.Item) -> None:
+        if it.refresh:
+            self._pool.start(_Job(self, it.id, "item", it.refresh))
+        # An open popup follows its item's refresh interval.
+        if it.popup and self._open == it.id:
+            self._pool.start(_Job(self, it.id, "popup", it.popup))
+
+    @Slot(str, str, object, bool)
+    def _on_result(self, item_id: str, kind: str, out: object, error: bool) -> None:
         if item_id not in self._view:
+            return
+        if kind == "popup":
+            if item_id == self._open:
+                self._set_popup(item_id, cast("dict[str, Any]", out) if isinstance(out, dict) else {}, error)
             return
         v = self._view[item_id]
         v["error"] = error
@@ -159,10 +195,23 @@ class Bar(QObject):
             v["text"] = str(out)
         self.itemsChanged.emit()
 
+    def _set_popup(self, item_id: str, content: dict[str, Any], error: bool) -> None:
+        it = self._items[item_id]
+        component = str(content.get("component", "ListPopup.qml"))
+        here = it.source.parent / component if it.source else None
+        path = here if here and here.is_file() else QML_DIR / component
+        self._popup = {**content, "component": QUrl.fromLocalFile(str(path)).toString(), "error": error}
+        self.popupChanged.emit()
+
     @Slot(str)
     def click(self, item_id: str) -> None:
         it = self._items.get(item_id)
-        if it is None or it.click is None:
+        if it is None:
+            return
+        if it.popup is not None:
+            self.toggle(item_id)
+            return
+        if it.click is None:
             return
         on_click, refresh = it.click, it.refresh
 
@@ -170,7 +219,52 @@ class Bar(QObject):
             on_click(ctx)
             return refresh(ctx) if refresh else None
 
-        self._pool.start(_Job(self, it, clicked))
+        self._pool.start(_Job(self, item_id, "item", clicked))
+
+    @Slot(str)
+    def toggle(self, item_id: str) -> None:
+        if self._open == item_id:
+            self.close()
+        else:
+            self.open(item_id)
+
+    @Slot(str)
+    def open(self, item_id: str) -> None:
+        it = self._items.get(item_id)
+        if it is None or it.popup is None or self._open == item_id:
+            return
+        self._open = item_id
+        self._popup = {}
+        self.popupChanged.emit()
+        self._pool.start(_Job(self, item_id, "popup", it.popup))
+
+    @Slot()
+    def close(self) -> None:
+        if self._open:
+            self._open = ""
+            self.popupChanged.emit()
+
+    @Slot(QWindow, int, int, int, int)
+    def setInputRect(self, window: QWindow, x: int, y: int, w: int, h: int) -> None:
+        """Limit pointer input to the drawn popup on a screen-wide surface."""
+        window.setMask(QRegion(x, y, w, h))
+
+    @Slot(str, str, str)
+    def action(self, item_id: str, name: str, payload: str) -> None:
+        """A popup's QML asks its glue to do something (save, join, ...)."""
+        it = self._items.get(item_id)
+        handler = it.actions.get(name) if it else None
+        if it is None or handler is None:
+            print(f"talos-bar: no action {name!r} on {item_id!r}", file=sys.stderr)
+            return
+
+        def run(ctx: glue.Context) -> glue.Output:
+            handler(ctx, payload)
+            return it.refresh(ctx) if it.refresh else None
+
+        self._pool.start(_Job(self, item_id, "item", run))
+        if it.popup and self._open == item_id:
+            self._pool.start(_Job(self, item_id, "popup", it.popup))
 
 
 def _print_warnings(warnings: list[QQmlError]) -> None:
@@ -188,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     engine.addImageProvider("icon", IconProvider())
     engine.rootContext().setContextProperty("bar", bar)
     engine.rootContext().setContextProperty("barAlign", os.environ.get("TALOS_BAR_ALIGN", "right"))
+    engine.rootContext().setContextProperty("layerShell", qml.name == "WaylandBar.qml")
     engine.warnings.connect(_print_warnings)
     engine.load(QUrl.fromLocalFile(str(qml)))
     if not engine.rootObjects():

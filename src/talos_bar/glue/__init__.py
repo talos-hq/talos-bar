@@ -30,6 +30,13 @@ class Rich(TypedDict, total=False):
 Output = str | Rich | None
 RefreshFn = Callable[["Context"], Output]
 ClickFn = Callable[["Context"], None]
+# What a popup shows: a dict handed to QML as `content`. With no "component"
+# key it is drawn by the built-in ListPopup.qml ({title, subtitle, rows:
+# [{text, subtext, icon, url}]}); otherwise "component" names a .qml file
+# beside the glue module (or a built-in one) that draws it.
+PopupFn = Callable[["Context"], dict[str, Any]]
+# Called from a popup's QML through bar.action(id, name, payload).
+ActionFn = Callable[["Context", str], None]
 
 
 @dataclass
@@ -43,6 +50,9 @@ class Item:
     source: Path | None = None
     order: int = 100  # left to right, lowest first
     plain: bool = False  # bare text like the clock, not a highlighted tab
+    popup: PopupFn | None = None
+    hover: bool = False  # popup opens on hover (and closes on leave), not on click
+    actions: dict[str, ActionFn] = field(default_factory=dict[str, ActionFn])
 
 
 @dataclass
@@ -80,6 +90,27 @@ def every(seconds: float) -> Callable[[RefreshFn], RefreshFn]:
 
     def deco(fn: RefreshFn) -> RefreshFn:
         _intervals[id_of(fn)] = seconds
+        return fn
+
+    return deco
+
+
+def popup(id: str, hover: bool = False) -> Callable[[PopupFn], PopupFn]:
+    """The tab opens a popup below it; this builds what the popup shows."""
+
+    def deco(fn: PopupFn) -> PopupFn:
+        it = _registry.setdefault(id, Item(id=id, label=id))
+        it.popup, it.hover = fn, hover
+        return fn
+
+    return deco
+
+
+def action(id: str, name: str) -> Callable[[ActionFn], ActionFn]:
+    """Handle ``bar.action(id, name, payload)`` sent by a popup's QML."""
+
+    def deco(fn: ActionFn) -> ActionFn:
+        _registry.setdefault(id, Item(id=id, label=id)).actions[name] = fn
         return fn
 
     return deco

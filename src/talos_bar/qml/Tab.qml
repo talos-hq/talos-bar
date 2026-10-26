@@ -33,6 +33,17 @@ Item {
         color: Qt.alpha(Theme.text, 0.08)
     }
 
+    // Plasma's expanded-applet marker: a highlight bar along the tab's foot.
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        height: 3
+        radius: 1.5
+        width: tab.expanded ? parent.width - 8 : 0
+        color: Theme.highlight
+        Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+    }
+
     RowLayout {
         id: content
         anchors.centerIn: parent
@@ -63,7 +74,7 @@ Item {
         }
     }
 
-    HoverHandler { id: hover }
+    HoverHandler { id: hover; cursorShape: tab.model.expandable ? Qt.PointingHandCursor : Qt.ArrowCursor }
     TapHandler { onTapped: tab.activated() }
     ToolTip.visible: tab.model.tooltip !== "" && tab.hovered && !tab.expanded
     ToolTip.delay: 400
