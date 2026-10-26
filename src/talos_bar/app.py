@@ -52,6 +52,7 @@ def _blank_view(it: glue.Item) -> dict[str, object]:
         "text": it.label,
         "subtext": "",
         "icon": "",
+        "dot": "",
         "tooltip": "",
         "error": False,
         "plain": it.plain,
@@ -190,6 +191,7 @@ class Bar(QObject):
             v["text"] = rich.get("text", str(v["text"]))
             v["subtext"] = rich.get("subtext", "")
             v["icon"] = rich.get("icon", "")
+            v["dot"] = rich.get("dot", "")
             v["tooltip"] = rich.get("tooltip", "")
         elif not error:
             v["text"] = str(out)

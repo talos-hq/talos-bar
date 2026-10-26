@@ -24,6 +24,7 @@ class Rich(TypedDict, total=False):
     text: str
     subtext: str  # a smaller second line under text (the clock's date)
     icon: str  # freedesktop icon name, e.g. "view-calendar-agenda"
+    dot: str  # a small status dot after the icon, as a colour ("#e5322d")
     tooltip: str
 
 
