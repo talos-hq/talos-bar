@@ -10,9 +10,14 @@ def refresh(ctx: Context) -> Output:
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import importlib.util
+import inspect
+import io
 import subprocess
 import sys
+import threading
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -127,6 +132,30 @@ def on_click(id: str) -> Callable[[ClickFn], ClickFn]:
 
 def run(cmd: list[str], timeout: float = 10.0) -> str:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False).stdout
+
+
+SCRIPTS = Path(__file__).parent.parent / "scripts"
+_script_lock = threading.Lock()
+
+
+def run_script(name: str, *args: str) -> str:
+    """Run a script from talos_bar/scripts in-process and return its stdout.
+
+    The scripts are carried over unchanged from ~/dev/nixos (calendar-py,
+    tasks): they import their siblings as top-level modules and print to
+    stdout, so this puts their directory on sys.path and captures print().
+    ``main()`` is called with ``[name, *args]`` when it takes argv. The lock
+    keeps one script at a time on the process-wide stdout redirect.
+    """
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    module = importlib.import_module(name)
+    main: Callable[..., object] = module.main
+    takes_argv = bool(inspect.signature(main).parameters)
+    out = io.StringIO()
+    with _script_lock, contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+        main([name, *args]) if takes_argv else main()
+    return out.getvalue()
 
 
 def id_of(fn: object) -> int:

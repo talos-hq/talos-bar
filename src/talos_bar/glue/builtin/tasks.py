@@ -1,24 +1,31 @@
-"""TASKS.md checklist, from the tasks backend (~/dev/nixos system/tasks).
+"""TASKS.md checklist, from scripts/tasks_cli.py (carried over from
+~/dev/nixos system/tasks unchanged).
 
-`tasks list` gives {open, synced, top}; `tasks read` the whole file;
-`tasks save64 <b64>` commits an edit locally (a timer pushes it). The path
-comes from TALOS_BAR_TASKS_CMD, else `tasks` on PATH; with neither, this
-glue adds nothing.
+`list` gives {open, synced, top}; `read` the whole file; `save64 <b64>`
+commits an edit locally (a timer pushes it). Enabled when the tasks clone
+exists (TASKS_REPO, default ~/dev/tasks). TALOS_BAR_TASKS_CMD, when set,
+runs an external command instead.
 """
 
 import base64
 import json
 import os
-import shutil
+from pathlib import Path
 from typing import Any
 
-from talos_bar.glue import Context, Output, action, every, item, popup, run
+from talos_bar.glue import Context, Output, action, every, item, popup, run, run_script
 
-CMD = os.environ.get("TALOS_BAR_TASKS_CMD") or shutil.which("tasks") or ""
+CMD = os.environ.get("TALOS_BAR_TASKS_CMD", "")
+REPO = Path(os.environ.get("TASKS_REPO", Path.home() / "dev" / "tasks"))
+ENABLED = bool(CMD) or (REPO / ".git").exists()
+
+
+def _tasks(*args: str) -> str:
+    return run([CMD, *args], timeout=25) if CMD else run_script("tasks_cli", *args)
 
 
 def _list(ctx: Context) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads(run([CMD, "list"], timeout=25) or "{}")
+    data: dict[str, Any] = json.loads(_tasks("list") or "{}")
     ctx.cache["tasks"] = data
     return data
 
@@ -30,7 +37,7 @@ def _tooltip(data: dict[str, Any]) -> str:
     return tip if data.get("synced", True) else tip + "\nedits waiting for the next sync"
 
 
-if CMD:
+if ENABLED:
 
     @item("tasks", label="Tasks", order=20)
     @every(seconds=30)
@@ -44,9 +51,9 @@ if CMD:
     @popup("tasks")
     def editor(ctx: Context) -> dict[str, Any]:
         data = ctx.cache.get("tasks") or _list(ctx)
-        text = run([CMD, "read"], timeout=25).removesuffix("\n")
+        text = _tasks("read").removesuffix("\n")
         return {"component": "Tasks.qml", "text": text, "synced": data.get("synced", True)}
 
     @action("tasks", "save")
     def save(ctx: Context, payload: str) -> None:
-        run([CMD, "save64", base64.b64encode(payload.encode()).decode()], timeout=25)
+        _tasks("save64", base64.b64encode(payload.encode()).decode())

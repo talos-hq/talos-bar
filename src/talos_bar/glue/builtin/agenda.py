@@ -1,25 +1,29 @@
-"""Today's meetings, from the calendar-agenda backend (~/dev/nixos calendar-py).
+"""Today's meetings, from scripts/calendar_agenda.py (carried over from
+~/dev/nixos calendar-py unchanged).
 
-The backend prints JSON: date, events, done, tomorrow, next, live, following,
-next_label, countdown, error. Its path comes from TALOS_BAR_AGENDA_CMD (the
-NixOS service sets it), else `calendar-agenda` on PATH; with neither, this
-glue adds nothing.
+The script prints JSON: date, events, done, tomorrow, next, live, following,
+next_label, countdown, error. It reads the iCal file calendar-sync writes;
+without that file this glue adds nothing. TALOS_BAR_AGENDA_CMD, when set,
+runs an external command instead.
 """
 
 import json
 import os
-import shutil
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from talos_bar.glue import Context, Output, action, every, item, popup, run
+from talos_bar.glue import Context, Output, action, every, item, popup, run, run_script
 
-CMD = os.environ.get("TALOS_BAR_AGENDA_CMD") or shutil.which("calendar-agenda") or ""
+CMD = os.environ.get("TALOS_BAR_AGENDA_CMD", "")
+# calendar_agenda.SOURCE, without importing the script just to decide.
+ENABLED = bool(CMD) or (Path.home() / ".local/share/calendar-sync/google.ics").exists()
 
 
 def _fetch(ctx: Context) -> dict[str, Any]:
-    agenda: dict[str, Any] = json.loads(run([CMD], timeout=25) or "{}")
+    raw = run([CMD], timeout=25) if CMD else run_script("calendar_agenda")
+    agenda: dict[str, Any] = json.loads(raw or "{}")
     ctx.cache["agenda"] = agenda
     return agenda
 
@@ -28,7 +32,7 @@ def _hm(epoch: float) -> str:
     return f"{datetime.fromtimestamp(epoch):%I:%M %p}".lstrip("0")
 
 
-if CMD:
+if ENABLED:
 
     @item("agenda", label="Calendar", order=10)
     @every(seconds=30)

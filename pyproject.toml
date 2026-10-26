@@ -5,7 +5,12 @@ description = "Cross-platform desktop bar (PySide6 + QML) extended with Python g
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
-dependencies = ["PySide6-Essentials>=6.7"]
+dependencies = [
+  "PySide6-Essentials>=6.7",
+  # scripts/: calendar_ical.py and tasks_cli.py
+  "icalendar>=6",
+  "markdown-it-py>=3",
+]
 
 [project.scripts]
 talos-bar = "talos_bar.__main__:main"
@@ -24,12 +29,16 @@ packages = ["src/talos_bar"]
 line-length = 110
 target-version = "py310"
 src = ["src", "tests"]
+# Carried over verbatim from ~/dev/nixos, which lints them with its own
+# stricter config; keep them byte-identical rather than restyle them here.
+extend-exclude = ["src/talos_bar/scripts", "tests/scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ANN"]
 
 [tool.basedpyright]
 include = ["src", "tests"]
+exclude = ["src/talos_bar/scripts", "tests/scripts"]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
