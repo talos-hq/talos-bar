@@ -69,11 +69,13 @@ A glue module is ordinary Python and uses a small decorator API:
 ```python
 from talos_bar.glue import item, every, on_click, run, notify
 
-@item("standup", label="Standup")       # adds a text/icon slot to the bar
-@every(seconds=60)                      # how often refresh runs (off the GUI thread)
+
+@item("standup", label="Standup")  # adds a text/icon slot to the bar
+@every(seconds=60)  # how often refresh runs (off the GUI thread)
 def refresh(ctx):
     nxt = ctx.backends.agenda.next_event()
     return f"{nxt.title} in {nxt.minutes_until}m" if nxt else ""
+
 
 @on_click("standup")
 def open_meeting(ctx):

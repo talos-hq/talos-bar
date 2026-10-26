@@ -14,3 +14,19 @@ Status: design phase. See:
 
 - [docs/DESIGN.md](docs/DESIGN.md) — architecture and decisions
 - [docs/MIGRATION.md](docs/MIGRATION.md) — moving the NixOS panel widgets here
+
+## Development
+
+```sh
+uv sync
+uv run talos-bar            # run the bar
+uv run ruff check . && uv run ruff format --check .
+uv run basedpyright         # strict mode
+uv run pytest
+```
+
+Glue lives in `src/talos_bar/glue/builtin/` and `~/.config/talos-bar/glue/`.
+Edit a glue file while the bar runs and it reloads.
+
+On NixOS the PyPI PySide6 wheel needs system libraries (libstdc++, zlib,
+krb5, xcb-*) on `LD_LIBRARY_PATH`; a Nix dev shell for this is still to do.

@@ -1,0 +1,35 @@
+[project]
+name = "talos-bar"
+version = "0.0.1"
+description = "Cross-platform desktop bar (PySide6 + QML) extended with Python glue"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.10"
+dependencies = ["PySide6-Essentials>=6.7"]
+
+[project.scripts]
+talos-bar = "talos_bar.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "basedpyright>=1.20"]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/talos_bar"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ANN"]
+
+[tool.basedpyright]
+include = ["src", "tests"]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
