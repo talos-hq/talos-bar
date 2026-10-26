@@ -113,6 +113,9 @@ class Bar(QObject):
         self._timers: dict[str, QTimer] = {}
         self._pool = QThreadPool.globalInstance()
         self._open = ""  # id of the item whose popup is showing
+        # Only a popup the user clicked open may take the keyboard, as in
+        # Plasma; one opened by hover (or by code) must never steal focus.
+        self._focus = False
         self._popup: dict[str, Any] = {}
         self.result.connect(self._on_result)
         self._watch = QFileSystemWatcher(self)
@@ -128,6 +131,10 @@ class Bar(QObject):
     @Property(str, notify=popupChanged)  # pyright: ignore[reportArgumentType]
     def openId(self) -> str:
         return self._open
+
+    @Property(bool, notify=popupChanged)  # pyright: ignore[reportArgumentType]
+    def popupFocus(self) -> bool:
+        return self._focus
 
     @Property("QVariantMap", notify=popupChanged)  # pyright: ignore[reportArgumentType]
     def popup(self) -> dict[str, Any]:
@@ -211,7 +218,12 @@ class Bar(QObject):
         if it is None:
             return
         if it.popup is not None:
-            self.toggle(item_id)
+            if self._open == item_id and not self._focus:
+                # Clicking a hover-opened tab pins it and hands it the keyboard.
+                self._focus = True
+                self.popupChanged.emit()
+            else:
+                self.toggle(item_id, focus=True)
             return
         if it.click is None:
             return
@@ -223,19 +235,22 @@ class Bar(QObject):
 
         self._pool.start(_Job(self, item_id, "item", clicked))
 
-    @Slot(str)
-    def toggle(self, item_id: str) -> None:
+    def toggle(self, item_id: str, focus: bool = False) -> None:
         if self._open == item_id:
             self.close()
         else:
-            self.open(item_id)
+            self.open(item_id, focus)
 
     @Slot(str)
-    def open(self, item_id: str) -> None:
+    def hoverOpen(self, item_id: str) -> None:
+        self.open(item_id)
+
+    def open(self, item_id: str, focus: bool = False) -> None:
         it = self._items.get(item_id)
         if it is None or it.popup is None or self._open == item_id:
             return
         self._open = item_id
+        self._focus = focus
         self._popup = {}
         self.popupChanged.emit()
         self._pool.start(_Job(self, item_id, "popup", it.popup))
@@ -244,6 +259,7 @@ class Bar(QObject):
     def close(self) -> None:
         if self._open:
             self._open = ""
+            self._focus = False
             self.popupChanged.emit()
 
     @Slot(QWindow, int, int, int, int)

@@ -57,7 +57,7 @@ Window {
                     // Hover popups open on entry; with any popup open, moving
                     // across tabs switches to the hovered one, menubar-style.
                     if (hovered && modelData.expandable && (modelData.hover || bar.openId !== ""))
-                        bar.open(modelData.id);
+                        bar.hoverOpen(modelData.id);
                     root.hoverCheck();
                 }
             }
@@ -75,7 +75,7 @@ Window {
         interval: 150
         onTriggered: {
             const open = bar.items.find(i => i.id === bar.openId);
-            if (open && open.hover && !root.tabsHovered && !(popupLoader.item && popupLoader.item.hovered)) bar.close();
+            if (open && open.hover && !bar.popupFocus && !root.tabsHovered && !(popupLoader.item && popupLoader.item.hovered)) bar.close();
         }
     }
 
@@ -87,6 +87,7 @@ Window {
             item.shown = Qt.binding(() => bar.openId !== "");
             item.itemId = Qt.binding(() => bar.openId);
             item.content = Qt.binding(() => bar.popup);
+            item.focusable = Qt.binding(() => bar.popupFocus);
             item.anchorX = Qt.binding(() => root.openTab ? root.screenX + root.openTab.x + row.x + root.openTab.width / 2 : 0);
             item.dismissed.connect(() => bar.close());
             item.hoveredChanged.connect(root.hoverCheck);

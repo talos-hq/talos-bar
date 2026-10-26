@@ -12,6 +12,8 @@ Window {
     property real anchorX: 0
     property real anchorY: Theme.barHeight
     property bool spansScreen: false
+    // Set only for a popup the user clicked open; see Bar.popupFocus.
+    property bool focusable: false
     readonly property bool hovered: frame.hovered
     readonly property int pad: Theme.shadowPad + 4
     signal dismissed()
@@ -28,8 +30,11 @@ Window {
     x: screen.virtualX + (spansScreen ? 0 : anchorX - width / 2)
     y: screen.virtualY + anchorY
 
-    onActiveChanged: if (!active && shown) dismissed()
-    onVisibleChanged: if (visible) requestActivate()
+    // A clicked-open popup holds the keyboard and closes when it loses it
+    // (a click elsewhere), like a Plasma applet popup.
+    onActiveChanged: if (!active && shown && focusable) dismissed()
+    onFocusableChanged: if (focusable && shown) requestActivate()
+    onShownChanged: if (shown && focusable) requestActivate()
 
     PopupFrame {
         id: frame
