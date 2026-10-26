@@ -83,7 +83,4 @@ Item {
 
     HoverHandler { id: hover; cursorShape: tab.model.expandable ? Qt.PointingHandCursor : Qt.ArrowCursor }
     TapHandler { onTapped: tab.activated() }
-    ToolTip.visible: tab.model.tooltip !== "" && tab.hovered && !tab.expanded
-    ToolTip.delay: 400
-    ToolTip.text: tab.model.tooltip
 }
