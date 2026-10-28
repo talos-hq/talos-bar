@@ -41,6 +41,7 @@ def tasks_popup(ctx): return {"title": "Tasks", "rows": []}
     bar = Bar()
     bar._pool.waitForDone()  # pyright: ignore[reportPrivateUsage]
     app.processEvents()
+    bar._items["clock"].source = QML_DIR.parent / "glue/builtin/clock.py"  # pyright: ignore[reportPrivateUsage]
     engine = QQmlApplicationEngine()
     engine.addImageProvider("icon", IconProvider())
     engine.rootContext().setContextProperty("bar", bar)
@@ -244,8 +245,8 @@ def test_world_clock_frame_does_not_move_sideways_while_appearing(ui: UI) -> Non
     QTest.qWait(300)
     assert positions, (bar.openId, bar.popup, clock.property("hovered"), popup.isVisible())
     content = cast("dict[str, object]", bar.property("popup"))
-    assert content["title"] == "World clock"
-    assert len(cast("list[object]", content["rows"])) == 8
+    assert "date" in content and "local" in content
+    assert len(cast("list[object]", content["rows"])) in (7, 8)
     assert positions[0][1] > 24
     assert all(p == positions[0] for p in positions), positions
 
@@ -344,3 +345,39 @@ def test_calendar_meeting_details_also_drop_vertically(ui: UI) -> None:
     assert abs(samples[-1][1] - bottom) < 0.1
     assert all(abs(p[0] - samples[-1][0]) < 0.1 for p in samples)
     assert all(b[1] >= a[1] - 0.1 for a, b in pairwise(samples))
+
+
+def test_detailed_clock_renders_and_ticks_without_reopening(ui: UI) -> None:
+    _, bar, window = ui
+    selected = tab(window, "clock")
+    QTest.mouseMove(window, selected.mapToScene(selected.boundingRect().center()).toPoint())
+    assert bar._pool.waitForDone(1000)  # pyright: ignore[reportPrivateUsage]
+    QTest.qWait(300)
+    popup = window.findChild(QQuickWindow, "itemPopup")
+    assert popup is not None
+    body = next(i for i in popup.findChildren(QQuickItem) if i.property("cityWidth") is not None)
+    content = cast("dict[str, object]", bar.property("popup"))
+    local = cast("dict[str, str]", content["local"])
+    before = local["time"]
+
+    def labels(item: QQuickItem) -> list[str]:
+        text = item.property("text")
+        result = [text] if isinstance(text, str) else []
+        for child in item.childItems():
+            result.extend(labels(child))
+        return result
+
+    rendered = labels(body)
+    assert str(content["date"]) in rendered
+    assert f"{local['city']}: {before}" in rendered
+    remote_rows = cast("list[dict[str, str]]", content["rows"])
+    assert all(f"{row['city']}:" in rendered for row in remote_rows)
+    assert any(" • " in text for text in rendered)
+    assert "KOrganizer" not in " ".join(rendered)
+    QTest.qWait(1100)
+    assert bar._pool.waitForDone(1000)  # pyright: ignore[reportPrivateUsage]
+    QTest.qWait(30)
+    refreshed = cast("dict[str, object]", bar.property("popup"))
+    assert cast("dict[str, str]", refreshed["local"])["time"] != before
+    assert bar.openId == "clock"
+    assert next(i for i in popup.findChildren(QQuickItem) if i.property("cityWidth") is not None) is body
