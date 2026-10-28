@@ -41,9 +41,25 @@ Window {
     function activateIfPinned() {
         if (focusable && shown && visible) requestActivate();
     }
-    onFocusableChanged: Qt.callLater(activateIfPinned)
-    onShownChanged: Qt.callLater(activateIfPinned)
-    onVisibleChanged: Qt.callLater(activateIfPinned)
+    // Layer-shell keyboard mode is double-buffered. Commit the changed
+    // mode before requesting activation, including when pinning a hover card
+    // whose pixels otherwise do not change and would not produce a frame.
+    property bool activationPending: false
+    function scheduleActivation() {
+        if (focusable && shown && visible) {
+            activationPending = true;
+            update();
+        }
+    }
+    onFocusableChanged: Qt.callLater(scheduleActivation)
+    onShownChanged: Qt.callLater(scheduleActivation)
+    onVisibleChanged: Qt.callLater(scheduleActivation)
+    onFrameSwapped: {
+        if (activationPending) {
+            activationPending = false;
+            activateIfPinned();
+        }
+    }
 
     PopupFrame {
         id: frame
