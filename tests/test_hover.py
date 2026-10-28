@@ -136,3 +136,17 @@ def test_hover_popup_handoff_and_click_pin(ui: UI) -> None:
     assert bar.openId == "agenda"
     QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=p)
     assert bar.openId == ""
+
+
+def test_tooltip_arriving_under_stationary_pointer(ui: UI) -> None:
+    _, bar, window = ui
+    tasks = tab(window, "tasks")
+    QTest.mouseMove(window, tasks.mapToScene(tasks.boundingRect().center()).toPoint())
+    QTest.qWait(100)
+    assert not window.property("tipShown")
+    bar._on_result("tasks", "item", {"tooltip": "Loaded task"}, False)  # pyright: ignore[reportPrivateUsage]
+    QTest.qWait(550)
+    assert window.property("tipShown")
+    bar._on_result("tasks", "item", {"tooltip": ""}, False)  # pyright: ignore[reportPrivateUsage]
+    QTest.qWait(200)
+    assert not window.property("tipShown")
