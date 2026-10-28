@@ -33,7 +33,7 @@ def refresh(ctx: Context) -> Output:
     return {"text": _hm(now), "subtext": f"{now:%m/%d/%y}"}
 
 
-@popup("clock")
+@popup("clock", hover=True)
 def world(ctx: Context) -> dict[str, Any]:
     now = datetime.now().astimezone()
     rows = [{"text": _city(z), "subtext": _hm(now.astimezone(ZoneInfo(z)))} for z in ZONES]

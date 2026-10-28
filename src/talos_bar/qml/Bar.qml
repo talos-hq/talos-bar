@@ -91,6 +91,7 @@ Window {
         id: popupLoader
         source: layerShell ? "WaylandPopup.qml" : "Popup.qml"
         onLoaded: {
+            item.objectName = "itemPopup";
             item.screen = Qt.binding(() => root.screen);
             item.shown = Qt.binding(() => bar.openId !== "");
             item.itemId = Qt.binding(() => bar.openId);
@@ -141,6 +142,7 @@ Window {
         id: tipLoader
         source: layerShell ? "WaylandPopup.qml" : "Popup.qml"
         onLoaded: {
+            item.objectName = "tooltipPopup";
             item.screen = Qt.binding(() => root.screen);
             item.shown = Qt.binding(() => root.tipShown);
             item.itemId = Qt.binding(() => root.tipTab ? root.tipTab.model.id : "");
