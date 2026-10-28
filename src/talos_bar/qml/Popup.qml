@@ -21,9 +21,14 @@ Window {
     // Not a child of the bar: layer-shell cannot parent a popup to a layer
     // surface it did not create, and Qt would otherwise make it transient.
     transientParent: null
+    // Hover windows must not activate merely by mapping. Layer-shell also
+    // enforces this through keyboardInteractivity; plain Qt windows need it too.
     flags: Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
+        | (!layerShell && !focusable ? Qt.WindowDoesNotAcceptFocus : 0)
     color: "transparent"
-    visible: shown || frame.animating
+    // Glue is asynchronous. Do not paint an empty frame, including while
+    // switching tabs: its temporary 24px width would move the popup sideways.
+    visible: !!content.component && (shown || frame.animating)
     width: spansScreen ? screen.width : frame.implicitWidth + pad * 2
     height: frame.implicitHeight + pad * 2 + (spansScreen ? anchorY : 0)
     // The position also picks the output when a layer surface is created.
@@ -32,13 +37,17 @@ Window {
 
     // A clicked-open popup holds the keyboard and closes when it loses it
     // (a click elsewhere), like a Plasma applet popup.
-    onActiveChanged: if (!active && shown && focusable) dismissed()
-    onFocusableChanged: if (focusable && shown) requestActivate()
-    onShownChanged: if (shown && focusable) requestActivate()
+    onActiveChanged: if (!active && visible && content.component && shown && focusable) dismissed()
+    function activateIfPinned() {
+        if (focusable && shown && visible) requestActivate();
+    }
+    onFocusableChanged: Qt.callLater(activateIfPinned)
+    onShownChanged: Qt.callLater(activateIfPinned)
+    onVisibleChanged: Qt.callLater(activateIfPinned)
 
     PopupFrame {
         id: frame
-        shown: win.shown
+        shown: win.shown && !!win.content.component
         itemId: win.itemId
         content: win.content
         y: win.spansScreen ? win.anchorY : win.pad - 4
