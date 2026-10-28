@@ -10,6 +10,7 @@ dependencies = [
   # scripts/: calendar_ical.py and tasks_cli.py
   "icalendar>=6",
   "markdown-it-py>=3",
+  "tzlocal>=5",
 ]
 
 [project.scripts]
