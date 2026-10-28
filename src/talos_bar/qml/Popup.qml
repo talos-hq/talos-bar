@@ -61,30 +61,52 @@ Window {
         }
     }
 
-    PopupFrame {
-        id: frame
-        shown: win.shown && !!win.content.component
-        itemId: win.itemId
-        content: win.content
+    // The bar's foot is the reveal origin. Clip the translated card here so
+    // it drops out from under the bar instead of passing over it.
+    Item {
+        id: viewport
         y: win.spansScreen ? win.anchorY : win.pad - 4
-        x: win.spansScreen
-            ? Math.max(8, Math.min(win.anchorX - width / 2, win.width - width - 8))
-            : win.pad
-        width: implicitWidth
-        height: implicitHeight
-        roomLeft: x
-        roomRight: win.width - x - width
-        onSideRectChanged: win.updateMask()
-        onXChanged: win.updateMask()
-        onWidthChanged: win.updateMask()
-        onHeightChanged: win.updateMask()
+        width: win.width
+        height: win.height - y
+        clip: true
         onYChanged: win.updateMask()
+        onHeightChanged: win.updateMask()
+        PopupFrame {
+            id: frame
+            shown: win.shown && !!win.content.component
+            itemId: win.itemId
+            content: win.content
+            y: 0
+            x: win.spansScreen
+                ? Math.max(8, Math.min(win.anchorX - width / 2, win.width - width - 8))
+                : win.pad
+            width: implicitWidth
+            height: implicitHeight
+            roomLeft: x
+            roomRight: win.width - x - width
+            onSlideOffsetChanged: win.updateMask()
+            onSideRectChanged: win.updateMask()
+            onXChanged: win.updateMask()
+            onWidthChanged: win.updateMask()
+            onHeightChanged: win.updateMask()
+            onYChanged: win.updateMask()
+        }
     }
     function updateMask() {
-        if (!spansScreen) return;
-        const rects = [Qt.rect(frame.x, frame.y, frame.width, frame.height)];
+        if (!spansScreen || !frame || !viewport) return;
+        const rects = [];
+        const top = viewport.y + frame.y + frame.slideOffset;
+        function addClipped(x, y, width, height) {
+            const left = Math.max(0, x);
+            const right = Math.min(win.width, x + width);
+            const clippedTop = Math.max(viewport.y, y);
+            const bottom = Math.min(win.height, y + height);
+            if (right > left && bottom > clippedTop)
+                rects.push(Qt.rect(left, clippedTop, right - left, bottom - clippedTop));
+        }
+        addClipped(frame.x, top, frame.width, frame.height);
         const side = frame.sideRect;
-        if (side) rects.push(Qt.rect(frame.x + side.x, frame.y + side.y, side.width, side.height));
+        if (side) addClipped(frame.x + side.x, top + side.y, side.width, side.height);
         bar.setInputRects(win, rects);
     }
     Shortcut { sequence: "Escape"; onActivated: win.dismissed() }

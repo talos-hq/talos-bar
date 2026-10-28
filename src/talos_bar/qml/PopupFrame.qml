@@ -18,12 +18,13 @@ Item {
                   loader.item.sideRect.width, loader.item.sideRect.height)
         : null
     readonly property bool hovered: hover.hovered || !!(loader.item && loader.item.sideHovered)
-    readonly property bool animating: anim.running
+    readonly property bool animating: anim.running || motion.animating
+    readonly property real slideOffset: motion.y
     implicitWidth: loader.implicitWidth + 24
     implicitHeight: loader.implicitHeight + 24
 
     opacity: shown ? 1 : 0
-    transform: Translate { y: frame.shown ? 0 : -8; Behavior on y { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } } }
+    transform: DropMotion { id: motion; shown: frame.shown; distance: frame.height }
     Behavior on opacity { NumberAnimation { id: anim; duration: 140; easing.type: Easing.OutCubic } }
 
     Rectangle {

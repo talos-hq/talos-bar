@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Iterator
+from itertools import pairwise
 from pathlib import Path
 from typing import cast
 
@@ -9,14 +10,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import QPoint, Qt, QUrl
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QUrl
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QJSValue, QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 
 from talos_bar import glue
-from talos_bar.app import QML_DIR, Bar
+from talos_bar.app import QML_DIR, Bar, IconProvider
 
 UI = tuple[QGuiApplication, Bar, QQuickWindow]
 
@@ -32,6 +33,8 @@ def agenda(ctx): pass
 def agenda_popup(ctx): return {"title": "Agenda", "rows": []}
 @item("tasks", label="Tasks")
 def tasks(ctx): pass
+@popup("tasks")
+def tasks_popup(ctx): return {"title": "Tasks", "rows": []}
 """)
     (tmp_path / "clock.py").write_text((QML_DIR.parent / "glue/builtin/clock.py").read_text())
     monkeypatch.setattr(glue, "glue_dirs", lambda: [tmp_path])
@@ -39,6 +42,7 @@ def tasks(ctx): pass
     bar._pool.waitForDone()  # pyright: ignore[reportPrivateUsage]
     app.processEvents()
     engine = QQmlApplicationEngine()
+    engine.addImageProvider("icon", IconProvider())
     engine.rootContext().setContextProperty("bar", bar)
     engine.rootContext().setContextProperty("barAlign", "right")
     engine.rootContext().setContextProperty("layerShell", False)
@@ -244,3 +248,99 @@ def test_world_clock_frame_does_not_move_sideways_while_appearing(ui: UI) -> Non
     assert len(cast("list[object]", content["rows"])) == 8
     assert positions[0][1] > 24
     assert all(p == positions[0] for p in positions), positions
+
+
+@pytest.mark.parametrize("kind", ["clock", "agenda", "tasks", "tooltip"])
+def test_all_cards_drop_from_the_bar_without_horizontal_motion(ui: UI, kind: str) -> None:
+    _, bar, window = ui
+    popup_name = "tooltipPopup" if kind == "tooltip" else "itemPopup"
+    popup = window.findChild(QQuickWindow, popup_name)
+    assert popup is not None
+    popup.setProperty("spansScreen", True)
+    frame = next(i for i in popup.findChildren(QQuickItem) if i.property("animating") is not None)
+    # A fully clipped dropdown must pass pointer input through. Qt treats an
+    # empty mask as the full window, so its explicit region must be off-surface.
+    mask = popup.mask()
+    assert not mask.isEmpty()
+    assert mask.intersected(QRect(0, 0, popup.width(), popup.height())).isEmpty()
+    samples: list[tuple[float, float, float, int, int]] = []
+
+    def sample() -> None:
+        if popup.isVisible() and frame.opacity() > 0:
+            position = frame.mapToScene(QPointF(0, 0))
+            if position.y() + frame.height() <= float(popup.property("anchorY")):
+                return  # the surface is mapped, but the card is still fully clipped
+            mask = popup.mask().boundingRect()
+            samples.append((position.x(), position.y(), frame.height(), mask.y(), mask.bottom()))
+
+    popup.frameSwapped.connect(sample)
+    selected = tab(window, "tasks" if kind == "tooltip" else kind)
+    if kind == "tooltip":
+        bar._on_result("tasks", "item", {"tooltip": "Example task"}, False)  # pyright: ignore[reportPrivateUsage]
+    QTest.mouseMove(window, selected.mapToScene(selected.boundingRect().center()).toPoint())
+    if kind == "tasks":
+        QTest.mouseClick(
+            window,
+            Qt.MouseButton.LeftButton,
+            pos=selected.mapToScene(selected.boundingRect().center()).toPoint(),
+        )
+    assert bar._pool.waitForDone(1000)  # pyright: ignore[reportPrivateUsage]
+    QTest.qWait(800 if kind == "tooltip" else 350)
+    assert len(samples) >= 3
+    # The card starts behind the bar and emerges downward from its bottom.
+    bottom = float(popup.property("anchorY"))
+    assert samples[0][1] < bottom - samples[0][2] * 0.3, samples
+    assert abs(samples[-1][1] - bottom) < 0.1
+    assert all(abs(s[0] - samples[-1][0]) < 0.1 for s in samples)
+    assert all(b[1] >= a[1] - 0.1 for a, b in pairwise(samples))
+    # Invisible space above and below the reveal never takes pointer input.
+    assert all(s[3] >= bottom and s[4] <= s[1] + s[2] + 1 for s in samples)
+
+
+def test_calendar_meeting_details_also_drop_vertically(ui: UI) -> None:
+    _, bar, window = ui
+    row: dict[str, object] = {
+        "title": "Example meeting",
+        "time": "10:00 AM",
+        "status": "future",
+        "tomorrow": False,
+        "location": "",
+        "link_kind": "",
+        "url": "",
+        "details": "Example details",
+        "emails": [],
+        "phones": [],
+    }
+    content: dict[str, object] = {
+        "component": str(QML_DIR.parent / "glue/builtin/Agenda.qml"),
+        "date": "Example day",
+        "events": [row],
+        "done": [],
+        "tomorrow": [],
+    }
+    bar._items["agenda"].popup = lambda ctx: content  # pyright: ignore[reportPrivateUsage]
+    popup = window.findChild(QQuickWindow, "itemPopup")
+    assert popup is not None
+    popup.setProperty("spansScreen", True)
+    selected = tab(window, "agenda")
+    QTest.mouseMove(window, selected.mapToScene(selected.boundingRect().center()).toPoint())
+    assert bar._pool.waitForDone(1000)  # pyright: ignore[reportPrivateUsage]
+    QTest.qWait(350)
+    agenda = next(i for i in popup.findChildren(QQuickItem) if i.property("sideWidth") is not None)
+    details = next(i for i in agenda.findChildren(QQuickItem) if i.property("onRight") is not None)
+    samples: list[tuple[float, float]] = []
+
+    def sample() -> None:
+        if details.isVisible() and details.opacity() > 0:
+            p = details.mapToScene(QPointF(0, 0))
+            samples.append((p.x(), p.y()))
+
+    popup.frameSwapped.connect(sample)
+    agenda.setProperty("focusRow", row)
+    QTest.qWait(350)
+    bottom = float(popup.property("anchorY"))
+    assert len(samples) >= 3
+    assert samples[0][1] < bottom - details.height() * 0.3
+    assert abs(samples[-1][1] - bottom) < 0.1
+    assert all(abs(p[0] - samples[-1][0]) < 0.1 for p in samples)
+    assert all(b[1] >= a[1] - 0.1 for a, b in pairwise(samples))

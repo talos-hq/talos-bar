@@ -5,7 +5,7 @@ import "../../qml"
 
 // Today's meetings: a port of the org.niteris.calendar-agenda plasmoid. The
 // list stays under its tab; a hovered (or clicked) meeting's full details
-// slide out beside it as a side panel, drawn outside this item's bounds on
+// drop down beside it as a side panel, drawn outside this item's bounds on
 // whichever side has room (PopupFrame.roomLeft/roomRight), as SidePopup.qml
 // does in the plasmoid.
 Item {
@@ -28,7 +28,7 @@ Item {
     readonly property real roomRight: parent ? parent.roomRight : 0
     readonly property int sideWidth: 380
     // Read by PopupFrame: the side panel's area (for input) and hover.
-    readonly property var sideRect: details.visible ? Qt.rect(details.x, details.y, details.width, details.height) : null
+    readonly property var sideRect: details.visible ? Qt.rect(details.x, details.y + detailsMotion.y, details.width, details.height) : null
     readonly property bool sideHovered: detailsHover.hovered
 
     readonly property color link: Qt.rgba(41 / 255, 128 / 255, 185 / 255, 1).lighter(1.35)
@@ -206,7 +206,9 @@ Item {
         id: details
         // Right of the list when it fits, else left; the list never moves.
         readonly property bool onRight: root.roomRight >= root.sideWidth + 24 || root.roomLeft < root.sideWidth + 24
-        visible: !root.empty && root.shownRow !== null
+        readonly property bool shown: !root.empty && root.shownRow !== null
+        visible: shown || detailsMotion.animating
+        transform: DropMotion { id: detailsMotion; shown: details.shown; distance: details.height }
         width: root.sideWidth
         height: Math.max(root.height, 200)
         x: onRight ? root.width + 24 : -root.sideWidth - 24
@@ -215,7 +217,7 @@ Item {
         color: Theme.window
         border.width: 1
         border.color: Qt.alpha(Theme.highlight, 0.35)
-        opacity: visible ? 1 : 0
+        opacity: shown ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 120 } }
         HoverHandler { id: detailsHover }
         ScrollView {

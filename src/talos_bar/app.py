@@ -287,6 +287,10 @@ class Bar(QObject):
         region = QRegion()
         for r in rects:
             region = region.united(r.toAlignedRect())
+        # An empty QWindow mask means "reset to the whole window". While a
+        # dropdown is fully clipped, an off-surface pixel keeps input empty.
+        if region.isEmpty():
+            region = QRegion(-1, -1, 1, 1)
         window.setMask(region)
 
     @Slot(str, str, str)
