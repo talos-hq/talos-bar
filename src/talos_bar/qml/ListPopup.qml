@@ -5,7 +5,7 @@ import QtQuick.Controls
 // Default popup body: {title, subtitle, rows: [{text, subtext, icon, url}]}.
 ColumnLayout {
     id: list
-    spacing: 6
+    spacing: 4
     property var data_: parent ? parent.content : ({})
     implicitWidth: Math.max(220, rows.implicitWidth)
 
@@ -24,7 +24,7 @@ ColumnLayout {
     }
     ColumnLayout {
         id: rows
-        spacing: 2
+        spacing: 1
         Layout.fillWidth: true
         Repeater {
             model: list.data_.rows || []
@@ -32,7 +32,7 @@ ColumnLayout {
                 required property var modelData
                 Layout.fillWidth: true
                 implicitWidth: line.implicitWidth + 16
-                implicitHeight: line.implicitHeight + 10
+                implicitHeight: line.implicitHeight + 2
                 radius: 5
                 color: rowHover.hovered ? Qt.alpha(Theme.highlight, 0.18) : "transparent"
                 RowLayout {
