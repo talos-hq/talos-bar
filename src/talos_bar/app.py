@@ -62,6 +62,20 @@ def _blank_view(it: glue.Item) -> dict[str, object]:
     }
 
 
+class ItemView(QObject):
+    """Keep each QML delegate alive while its displayed data refreshes."""
+
+    changed = Signal()
+
+    def __init__(self, value: dict[str, object], parent: QObject) -> None:
+        super().__init__(parent)
+        self.value = value
+
+    @Property("QVariantMap", notify=changed)  # pyright: ignore[reportArgumentType]
+    def content(self) -> dict[str, object]:
+        return self.value
+
+
 class IconProvider(QQuickImageProvider):
     """``image://icon/<name>``: freedesktop theme icons for QML."""
 
@@ -111,6 +125,7 @@ class Bar(QObject):
         self.ctx = glue.Context()
         self._items: dict[str, glue.Item] = {}
         self._view: dict[str, dict[str, object]] = {}
+        self._item_views: dict[str, ItemView] = {}
         self._timers: dict[str, QTimer] = {}
         self._pool = QThreadPool.globalInstance()
         self._open = ""  # id of the item whose popup is showing
@@ -125,9 +140,9 @@ class Bar(QObject):
         self.reload()
 
     @Property(list, notify=itemsChanged)  # pyright: ignore[reportArgumentType]
-    def items(self) -> list[dict[str, object]]:
+    def items(self) -> list[ItemView]:
         ordered = sorted(self._items.values(), key=lambda i: (i.order, i.id))
-        return [self._view[i.id] for i in ordered]
+        return [self._item_views[i.id] for i in ordered]
 
     @Property(str, notify=popupChanged)  # pyright: ignore[reportArgumentType]
     def openId(self) -> str:
@@ -162,6 +177,9 @@ class Bar(QObject):
                 self._items[it.id] = it
                 v = self._view.setdefault(it.id, _blank_view(it))
                 v.update(plain=it.plain, expandable=it.popup is not None, hover=it.hover)
+                if it.id not in self._item_views:
+                    self._item_views[it.id] = ItemView(v, self)
+                self._item_views[it.id].changed.emit()
                 self._schedule(it)
         if self._open not in self._items:
             self.close()
@@ -203,7 +221,7 @@ class Bar(QObject):
             v["tooltip"] = rich.get("tooltip", "")
         elif not error:
             v["text"] = str(out)
-        self.itemsChanged.emit()
+        self._item_views[item_id].changed.emit()
 
     def _set_popup(self, item_id: str, content: dict[str, Any], error: bool) -> None:
         it = self._items[item_id]

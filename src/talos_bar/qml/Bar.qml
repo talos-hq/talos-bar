@@ -51,18 +51,20 @@ Window {
             delegate: Tab {
                 id: tab
                 required property var modelData
-                model: modelData
-                expanded: bar.openId === modelData.id
+                model: modelData.content
+                readonly property string tooltipText: model.tooltip
+                onTooltipTextChanged: if (hovered) root.tipCheck()
+                expanded: bar.openId === tab.model.id
                 onExpandedChanged: if (expanded) root.openTab = tab
-                onActivated: bar.click(modelData.id)
+                onActivated: bar.click(tab.model.id)
                 onHoveredChanged: {
                     if (hovered) root.hoveredTab = tab;
                     else if (root.hoveredTab === tab) root.hoveredTab = null;
                     root.tipCheck();
                     // Hover popups open on entry; with any popup open, moving
                     // across tabs switches to the hovered one, menubar-style.
-                    if (hovered && modelData.expandable && (modelData.hover || bar.openId !== ""))
-                        bar.hoverOpen(modelData.id);
+                    if (hovered && tab.model.expandable && (tab.model.hover || bar.openId !== ""))
+                        bar.hoverOpen(tab.model.id);
                     root.hoverCheck();
                 }
             }
@@ -105,7 +107,7 @@ Window {
     // as the bar, and Controls' in-window ToolTip neither fits it nor goes
     // away reliably when the pointer leaves for another output or window.
     property Item tipTab: null
-    readonly property bool tipShown: tipTab !== null && bar.openId === ""
+    readonly property bool tipShown: tipTab !== null && tipTab.model.tooltip !== "" && bar.openId === ""
     function tipCheck() {
         const tab = root.hoveredTab;
         if (tab && tab.model.tooltip !== "" && bar.openId === "") {
@@ -133,7 +135,7 @@ Window {
     Timer {
         id: tipHideTimer
         interval: 150
-        onTriggered: if (!root.hoveredTab && !(tipLoader.item && tipLoader.item.hovered)) root.tipTab = null
+        onTriggered: if ((!root.hoveredTab || root.hoveredTab.model.tooltip === "") && !(tipLoader.item && tipLoader.item.hovered)) root.tipTab = null
     }
     Loader {
         id: tipLoader
