@@ -51,18 +51,18 @@ Window {
             delegate: Tab {
                 id: tab
                 required property var modelData
-                model: modelData
-                expanded: bar.openId === modelData.id
+                model: modelData.content
+                expanded: bar.openId === tab.model.id
                 onExpandedChanged: if (expanded) root.openTab = tab
-                onActivated: bar.click(modelData.id)
+                onActivated: bar.click(tab.model.id)
                 onHoveredChanged: {
                     if (hovered) root.hoveredTab = tab;
                     else if (root.hoveredTab === tab) root.hoveredTab = null;
                     root.tipCheck();
                     // Hover popups open on entry; with any popup open, moving
                     // across tabs switches to the hovered one, menubar-style.
-                    if (hovered && modelData.expandable && (modelData.hover || bar.openId !== ""))
-                        bar.hoverOpen(modelData.id);
+                    if (hovered && tab.model.expandable && (tab.model.hover || bar.openId !== ""))
+                        bar.hoverOpen(tab.model.id);
                     root.hoverCheck();
                 }
             }
