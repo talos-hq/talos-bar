@@ -33,6 +33,13 @@ Item {
 
     readonly property color link: Qt.rgba(41 / 255, 128 / 255, 185 / 255, 1).lighter(1.35)
     readonly property color positive: "#27ae60"
+    // The big Join button waits until a meeting is in progress or this close
+    // to starting, so it never suggests an hour-off meeting is ready to join.
+    readonly property int joinLeadSeconds: 5 * 60
+    property real now: Date.now() / 1000
+    Timer { interval: 15000; running: true; repeat: true; onTriggered: root.now = Date.now() / 1000 }
+    readonly property bool joinable: !!agenda.next && agenda.next.link_kind === "Zoom"
+        && (agenda.live === true || agenda.next.start - now <= joinLeadSeconds)
 
     function openMeeting(row) {
         const url = row.join_url || row.url;
@@ -129,7 +136,7 @@ Item {
                 Text_ { text: root.agenda.next ? root.agenda.next.time : ""; opacity: 0.75 }
                 Button {
                     id: join
-                    visible: !!root.agenda.next && root.agenda.next.link_kind === "Zoom"
+                    visible: root.joinable
                     Layout.fillWidth: true
                     Layout.topMargin: 4
                     onClicked: root.openMeeting(root.agenda.next)
@@ -144,7 +151,7 @@ Item {
                         Item { Layout.fillWidth: true }
                         Image { source: "image://icon/camera-video"; sourceSize: Qt.size(18, 18) }
                         Text_ {
-                            text: root.agenda.live ? "Join Zoom meeting now" : "Join Zoom meeting"
+                            text: "Join Zoom meeting now"
                             font.pixelSize: 15
                             font.bold: true
                         }
