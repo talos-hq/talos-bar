@@ -39,7 +39,13 @@ if ENABLED:
     def refresh(ctx: Context) -> Output:
         a = _fetch(ctx)
         nxt, following = a.get("next"), a.get("following")
-        text = "In progress" if a.get("live") else _hm(nxt["start"]) if nxt else "—"
+        # A bare clock time reads as "starting now"; say how far off it is.
+        if a.get("live"):
+            text = "In progress"
+        elif nxt:
+            text = f"Next {_hm(nxt['start'])} · {a.get('countdown', '')}".rstrip(" ·")
+        else:
+            text = "—"
         if following:
             text += f"  │  Next {_hm(following['start'])}"
         out: Output = {"text": text, "icon": "view-calendar-agenda"}
