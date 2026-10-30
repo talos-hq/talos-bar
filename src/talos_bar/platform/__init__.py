@@ -36,8 +36,22 @@ def prepare() -> str:
     return "Bar.qml"
 
 
+def target_screen():
+    """The screen named by TALOS_BAR_SCREEN (e.g. HDMI-A-1), else the primary.
+
+    Qt on Wayland does not always learn the compositor's primary output: on
+    KWin it can report whichever output was announced first, which puts the
+    bar on a side monitor.
+    """
+    name = os.environ.get("TALOS_BAR_SCREEN", "")
+    for screen in QGuiApplication.screens():
+        if name and screen.name() == name:
+            return screen
+    return QGuiApplication.primaryScreen()
+
+
 def dock(window: QWindow) -> None:
-    screen = QGuiApplication.primaryScreen()
+    screen = target_screen()
     window.setScreen(screen)
     if QGuiApplication.platformName() == "wayland" and use_layer_shell():
         # Qt re-derives the output from the window position at show time, and

@@ -38,6 +38,7 @@ against nixpkgs' Qt and layer-shell-qt:
 nix run .#talos-bar                         # packaged build
 nix develop -c python -m talos_bar          # dev loop: edit src/, rerun
 TALOS_BAR_ALIGN=center nix run .#talos-bar  # left | center | right (default)
+TALOS_BAR_SCREEN=HDMI-A-1 nix run .#talos-bar  # pin to an output by name (default: primary)
 ```
 
 On Wayland the bar is a layer-shell surface on the primary screen: it stays
