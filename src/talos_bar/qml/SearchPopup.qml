@@ -12,12 +12,16 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
     color: "transparent"
     visible: false
+    // Wayland may refuse focus to a window the user did not click; only a popup that actually
+    // gained focus hides when it loses it, so a refused activation still leaves it on screen.
+    property bool hadFocus: false
 
     function open() {
         field.text = ""
         search.query("")
         x = Screen.virtualX + (Screen.width - width) / 2
         y = Screen.virtualY + Screen.height / 4
+        hadFocus = false
         visible = true
         raise()
         requestActivate()
@@ -34,7 +38,7 @@ Window {
         target: search
         function onShow() { win.visible ? win.visible = false : win.open() }
     }
-    onActiveChanged: if (!active) visible = false
+    onActiveChanged: active ? hadFocus = true : (hadFocus && (visible = false))
 
     Rectangle {
         anchors.fill: parent

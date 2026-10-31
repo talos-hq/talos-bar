@@ -374,6 +374,7 @@ dependencies = [
 [[package]]
 name = "kernal-api"
 version = "0.1.36"
+source = "git+https://github.com/forge-ci/kernal-api?branch=talos%2Fintegration#10f4bbba6e419a9548592f06b328e07aba3f5442"
 dependencies = [
  "blake3",
  "dirs",

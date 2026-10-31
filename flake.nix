@@ -32,6 +32,19 @@
           '';
           meta.mainProgram = "talos-bar";
         };
+        # Super+Space search daemon; every OS touchpoint goes through kernal-api.
+        talos-searchd = pkgs.rustPlatform.buildRustPackage {
+          pname = "talos-searchd";
+          version = (builtins.fromTOML (builtins.readFile ./searchd/Cargo.toml)).package.version;
+          src = ./searchd;
+          cargoLock = {
+            lockFile = ./searchd/Cargo.lock;
+            allowBuiltinFetchGit = true;
+          };
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.dbus ];
+          meta.mainProgram = "talos-searchd";
+        };
         default = talos-bar;
       });
 
