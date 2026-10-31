@@ -94,6 +94,16 @@ Item {
             }
         }
 
+        // Start a new Zoom meeting hosted by the signed-in user; the web page
+        // hands off to the Zoom app.
+        Button {
+            Layout.fillWidth: true
+            text: "Launch meeting"
+            icon.source: "image://icon/camera-video"
+            icon.color: "transparent"
+            onClicked: { Qt.openUrlExternally("https://zoom.us/start/videomeeting"); bar.close(); }
+        }
+
         // Headliner: the meeting the tab shows, with one big Join button.
         Rectangle {
             visible: !!root.agenda.next
