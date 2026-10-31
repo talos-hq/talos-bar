@@ -32,7 +32,8 @@ Item {
     readonly property bool sideHovered: detailsHover.hovered
 
     readonly property color link: Qt.rgba(41 / 255, 128 / 255, 185 / 255, 1).lighter(1.35)
-    readonly property color positive: "#27ae60"
+    // Tomorrow's rows: semi-transparent yellow, so they lead without shouting.
+    readonly property color tomorrowColor: Qt.alpha("#f5c518", 0.7)
     // The big Join button waits until a meeting is in progress or this close
     // to starting, so it never suggests an hour-off meeting is ready to join.
     readonly property int joinLeadSeconds: 5 * 60
@@ -188,6 +189,24 @@ Item {
                 id: eventList
                 width: parent.width
                 spacing: 6
+                // Once today is over, tomorrow leads, in translucent yellow;
+                // the day just gone stays listed below it.
+                Text_ {
+                    visible: root.tomorrow.length > 0
+                    width: eventList.width
+                    text: "Tomorrow"
+                    font.bold: true
+                    color: root.tomorrowColor
+                }
+                Repeater { model: root.tomorrow; delegate: meetingRow }
+                Text_ {
+                    visible: root.tomorrow.length > 0 && (root.events.length > 0 || root.done.length > 0)
+                    width: eventList.width
+                    topPadding: 8
+                    text: "Today"
+                    font.bold: true
+                    opacity: 0.8
+                }
                 Repeater { model: root.events; delegate: meetingRow }
                 ItemDelegate {
                     visible: root.done.length > 0
@@ -203,15 +222,6 @@ Item {
                     }
                 }
                 Repeater { model: root.showDone ? root.done : []; delegate: meetingRow }
-                Text_ {
-                    visible: root.tomorrow.length > 0
-                    width: eventList.width
-                    topPadding: 8
-                    text: "Tomorrow"
-                    font.bold: true
-                    color: root.positive
-                }
-                Repeater { model: root.tomorrow; delegate: meetingRow }
             }
         }
     }
@@ -261,7 +271,7 @@ Item {
         ItemDelegate {
             id: meeting
             required property var modelData
-            readonly property color accent: modelData.tomorrow ? root.positive
+            readonly property color accent: modelData.tomorrow ? root.tomorrowColor
                 : modelData.status === "current" ? Theme.highlight : Theme.text
             width: parent ? parent.width : 0
             implicitHeight: details.implicitHeight + 18
@@ -289,7 +299,7 @@ Item {
                     maximumLineCount: 2
                     elide: Text.ElideRight
                     font.pixelSize: 14
-                    color: meeting.modelData.tomorrow ? root.positive : Theme.text
+                    color: meeting.modelData.tomorrow ? root.tomorrowColor : Theme.text
                 }
                 Text_ {
                     visible: meeting.modelData.link_kind !== "Zoom"
