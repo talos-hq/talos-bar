@@ -74,7 +74,7 @@ Item {
         width: root.empty ? 360 : 440
         spacing: 10
 
-        // Header, shown even with no meetings so Launch meeting is always there.
+        // Header, shown even with no meetings so New Zoom Meeting is always there.
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
@@ -88,7 +88,7 @@ Item {
             // Start a new Zoom meeting hosted by the signed-in user; the web
             // page hands off to the Zoom app.
             Button {
-                text: "Launch meeting"
+                text: "New Zoom Meeting"
                 icon.source: "image://icon/camera-video"
                 icon.color: "transparent"
                 onClicked: { Qt.openUrlExternally("https://zoom.us/start/videomeeting"); bar.close(); }
