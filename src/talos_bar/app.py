@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import sys
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from PySide6.QtCore import (
     Property,
@@ -76,6 +76,16 @@ class ItemView(QObject):
         return self.value
 
 
+# Breeze names the glue uses, mapped to icons Adwaita and other non-KDE
+# themes also have, for desktops without Breeze installed.
+ICON_FALLBACKS = {
+    "view-calendar-agenda": "x-office-calendar",
+    "view-calendar-day": "x-office-calendar",
+    "view-task": "emblem-default",
+    "internet-services": "applications-internet",
+}
+
+
 class IconProvider(QQuickImageProvider):
     """``image://icon/<name>``: freedesktop theme icons for QML."""
 
@@ -84,7 +94,10 @@ class IconProvider(QQuickImageProvider):
 
     def requestPixmap(self, id: str, size: QSize, requestedSize: QSize) -> QPixmap:
         side = max(requestedSize.width(), requestedSize.height(), 16)
-        pix = QIcon.fromTheme(id).pixmap(side, side)
+        icon = QIcon.fromTheme(id)
+        if icon.isNull() and id in ICON_FALLBACKS:
+            icon = QIcon.fromTheme(ICON_FALLBACKS[id])
+        pix = icon.pixmap(side, side)
         size.setWidth(pix.width())
         size.setHeight(pix.height())
         return pix
@@ -113,6 +126,9 @@ def _use_desktop_theme(app: QGuiApplication) -> None:
         app.setFont(font)
     if not QIcon.themeName() or QIcon.themeName() == "hicolor":
         QIcon.setThemeName("breeze-dark")
+    # Without Breeze (GNOME, most other desktops) look in Adwaita next.
+    if not QIcon.fallbackThemeName() or QIcon.fallbackThemeName() == "hicolor":
+        QIcon.setFallbackThemeName("Adwaita")
 
 
 class Bar(QObject):
@@ -132,11 +148,16 @@ class Bar(QObject):
         # Only a popup the user clicked open may take the keyboard, as in
         # Plasma; one opened by hover (or by code) must never steal focus.
         self._focus = False
-        self._popup: dict[str, Any] = {}
+        self._popup: dict[str, object] = {}
         self.result.connect(self._on_result)
         self._watch = QFileSystemWatcher(self)
         self._watch.directoryChanged.connect(self._changed)
         self._watch.fileChanged.connect(self._changed)
+        # Set by main(); reload() trims QML components nothing uses any more.
+        self.engine: QQmlApplicationEngine | None = None
+        # Bumped per reload: the engine caches components by URL, so a new
+        # query string makes an edited popup's QML load fresh.
+        self._generation = 0
         self.reload()
 
     @Property(list, notify=itemsChanged)  # pyright: ignore[reportArgumentType]
@@ -153,7 +174,7 @@ class Bar(QObject):
         return self._focus
 
     @Property("QVariantMap", notify=popupChanged)  # pyright: ignore[reportArgumentType]
-    def popup(self) -> dict[str, Any]:
+    def popup(self) -> dict[str, object]:
         return self._popup
 
     @Slot(str)
@@ -166,11 +187,22 @@ class Bar(QObject):
             t.stop()
         self._timers.clear()
         self._items.clear()
+        # Scripts are imported once and cached; popup QML is cached by URL.
+        # Without dropping both, a reload keeps running the old code.
+        glue.forget_scripts()
+        self._generation += 1
+        if self.engine is not None:
+            self.engine.trimComponentCache()
         files: list[Path] = []
         for d in glue.glue_dirs():
             if d.is_dir():
                 files += sorted(p for p in d.glob("*.py") if not p.name.startswith("_"))
                 self._watch.addPath(str(d))
+                for qml in d.glob("*.qml"):
+                    self._watch.addPath(str(qml))
+        if glue.SCRIPTS.is_dir():
+            for script in glue.SCRIPTS.glob("*.py"):
+                self._watch.addPath(str(script))
         for f in files:
             self._watch.addPath(str(f))
             for it in glue.load_file(f):
@@ -208,7 +240,8 @@ class Bar(QObject):
             return
         if kind == "popup":
             if item_id == self._open:
-                self._set_popup(item_id, cast("dict[str, Any]", out) if isinstance(out, dict) else {}, error)
+                content = cast("Mapping[str, object]", out) if isinstance(out, dict) else None
+                self._set_popup(item_id, content or {}, error)
             return
         v = self._view[item_id]
         v["error"] = error
@@ -223,12 +256,14 @@ class Bar(QObject):
             v["text"] = str(out)
         self._item_views[item_id].changed.emit()
 
-    def _set_popup(self, item_id: str, content: dict[str, Any], error: bool) -> None:
+    def _set_popup(self, item_id: str, content: Mapping[str, object], error: bool) -> None:
         it = self._items[item_id]
         component = str(content.get("component", "ListPopup.qml"))
         here = it.source.parent / component if it.source else None
         path = here if here and here.is_file() else QML_DIR / component
-        self._popup = {**content, "component": QUrl.fromLocalFile(str(path)).toString(), "error": error}
+        url = QUrl.fromLocalFile(str(path))
+        url.setQuery(f"v={self._generation}")
+        self._popup = {**content, "component": url.toString(), "error": error}
         self.popupChanged.emit()
 
     @Slot(str)
@@ -323,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     _use_desktop_theme(app)
     bar = Bar()
     engine = QQmlApplicationEngine()
+    bar.engine = engine
     engine.addImageProvider("icon", IconProvider())
     engine.rootContext().setContextProperty("bar", bar)
     engine.rootContext().setContextProperty("barAlign", os.environ.get("TALOS_BAR_ALIGN", "right"))
