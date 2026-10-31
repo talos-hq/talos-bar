@@ -34,6 +34,26 @@ Window {
         }
     }
 
+    // Right-click anywhere on the bar: choose the screen it lives on.
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: { bar.close(); root.tipTab = null; root.screenMenuShown = true; }
+    }
+    property bool screenMenuShown: false
+    Loader {
+        id: screenLoader
+        source: layerShell ? "WaylandPopup.qml" : "Popup.qml"
+        onLoaded: {
+            item.objectName = "screenMenu";
+            item.screen = Qt.binding(() => root.screen);
+            item.shown = Qt.binding(() => root.screenMenuShown);
+            item.focusable = true;
+            item.content = { component: Qt.resolvedUrl("ScreenMenu.qml") };
+            item.anchorX = Qt.binding(() => root.screenX + root.width / 2);
+            item.dismissed.connect(() => root.screenMenuShown = false);
+        }
+    }
+
     property Item openTab: null
     // The tab under the pointer. One shared flag would be cleared by the
     // tab being left after the next one reported it was entered.
