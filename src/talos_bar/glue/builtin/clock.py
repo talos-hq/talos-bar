@@ -1,7 +1,7 @@
 """Clock: time over date, like the Plasma digital clock; world zones in its popup."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, TypedDict
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 from tzlocal import get_localzone
@@ -102,5 +102,5 @@ def world_at(now: datetime, local_zone: ZoneInfo) -> WorldClock:
 
 
 @popup("clock", hover=True)
-def world(ctx: Context) -> dict[str, Any]:
-    return dict(world_at(datetime.now(timezone.utc), get_localzone()))
+def world(ctx: Context) -> WorldClock:
+    return world_at(datetime.now(timezone.utc), get_localzone())

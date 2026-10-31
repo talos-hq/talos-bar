@@ -11,7 +11,7 @@ import base64
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import TypedDict, cast
 
 from talos_bar.glue import Context, Output, action, every, item, popup, run, run_script
 
@@ -20,18 +20,37 @@ REPO = Path(os.environ.get("TASKS_REPO", Path.home() / "dev" / "tasks"))
 ENABLED = bool(CMD) or (REPO / ".git").exists()
 
 
+class TaskLine(TypedDict, total=False):
+    check: bool | None  # None: a plain bullet, not a checkbox
+    text: str
+
+
+class TaskList(TypedDict, total=False):
+    """`tasks_cli list` output."""
+
+    open: int
+    synced: bool
+    top: list[TaskLine]
+
+
+class Editor(TypedDict):
+    component: str
+    text: str
+    synced: bool
+
+
 def _tasks(*args: str) -> str:
     return run([CMD, *args], timeout=25) if CMD else run_script("tasks_cli", *args)
 
 
-def _list(ctx: Context) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads(_tasks("list") or "{}")
+def _list(ctx: Context) -> TaskList:
+    data = cast("TaskList", json.loads(_tasks("list") or "{}"))
     ctx.cache["tasks"] = data
     return data
 
 
-def _tooltip(data: dict[str, Any]) -> str:
-    marks = {None: "•", True: "☑", False: "☐"}
+def _tooltip(data: TaskList) -> str:
+    marks: dict[bool | None, str] = {None: "•", True: "☑", False: "☐"}
     rows = [f"{marks.get(t.get('check'), '•')} {t.get('text', '')}" for t in data.get("top", [])]
     tip = "\n".join(rows) or "Nothing yet"
     return tip if data.get("synced", True) else tip + "\nedits waiting for the next sync"
@@ -49,8 +68,9 @@ if ENABLED:
         return out
 
     @popup("tasks")
-    def editor(ctx: Context) -> dict[str, Any]:
-        data = ctx.cache.get("tasks") or _list(ctx)
+    def editor(ctx: Context) -> Editor:
+        cached = ctx.cache.get("tasks")
+        data = cast("TaskList", cached) if isinstance(cached, dict) else _list(ctx)
         text = _tasks("read").removesuffix("\n")
         return {"component": "Tasks.qml", "text": text, "synced": data.get("synced", True)}
 

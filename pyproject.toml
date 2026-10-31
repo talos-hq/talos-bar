@@ -43,3 +43,6 @@ exclude = ["src/talos_bar/scripts", "tests/scripts"]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
+# Strict types only: no Any, written or leaked in through untyped calls.
+reportAny = "error"
+reportExplicitAny = "error"

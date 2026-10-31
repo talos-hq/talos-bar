@@ -9,10 +9,11 @@ runs an external command instead.
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TypedDict, cast
 
 from talos_bar.glue import Context, Output, action, every, item, popup, run, run_script
 
@@ -21,9 +22,65 @@ CMD = os.environ.get("TALOS_BAR_AGENDA_CMD", "")
 ENABLED = bool(CMD) or (Path.home() / ".local/share/calendar-sync/google.ics").exists()
 
 
-def _fetch(ctx: Context) -> dict[str, Any]:
+class Row(TypedDict):
+    """One meeting, as calendar_agenda.Row serialises it."""
+
+    title: str
+    time: str
+    start: float
+    end: float
+    all_day: bool
+    status: str
+    meeting: bool
+    location: str
+    url: str
+    link_kind: str
+    join_url: str
+    details: str
+    emails: list[str]
+    phones: list[str]
+    tomorrow: bool
+
+
+class Agenda(TypedDict, total=False):
+    """calendar_agenda.Feed; empty when the script printed nothing."""
+
+    date: str
+    events: list[Row]
+    done: list[Row]
+    tomorrow: list[Row]
+    next: Row | None
+    live: bool
+    following: Row | None
+    next_label: str
+    countdown: str
+    error: str
+
+
+class AgendaPopup(Agenda):
+    component: str
+
+
+def _zoom_app_installed() -> bool:
+    """Whether something handles zoommtg:// links (the Zoom desktop app)."""
+    if not shutil.which("xdg-mime"):
+        return True  # can't tell; keep the app links
+    handler = run(["xdg-mime", "query", "default", "x-scheme-handler/zoommtg"], timeout=5)
+    return bool(handler.strip())
+
+
+def _fetch(ctx: Context) -> Agenda:
     raw = run([CMD], timeout=25) if CMD else run_script("calendar_agenda")
-    agenda: dict[str, Any] = json.loads(raw or "{}")
+    agenda = cast("Agenda", json.loads(raw or "{}"))
+    zoom_app = ctx.cache.get("zoom_app")
+    if not isinstance(zoom_app, bool):
+        zoom_app = ctx.cache["zoom_app"] = _zoom_app_installed()
+    if not zoom_app:
+        # Without the Zoom app a zoommtg:// link does nothing; use the web link.
+        rows = [*agenda.get("events", []), *agenda.get("done", []), *agenda.get("tomorrow", [])]
+        rows += [row for row in (agenda.get("next"), agenda.get("following")) if row]
+        for row in rows:
+            row["join_url"] = ""
     ctx.cache["agenda"] = agenda
     return agenda
 
@@ -54,10 +111,15 @@ if ENABLED:
         return out
 
     @popup("agenda", hover=True)
-    def agenda(ctx: Context) -> dict[str, Any]:
-        a = ctx.cache.get("agenda") or _fetch(ctx)
+    def agenda(ctx: Context) -> AgendaPopup:
+        cached = ctx.cache.get("agenda")
+        a = cast("Agenda", cached) if isinstance(cached, dict) else _fetch(ctx)
         return {**a, "component": "Agenda.qml"}
 
     @action("agenda", "open_calendar")
     def open_calendar(ctx: Context, payload: str) -> None:
-        subprocess.Popen(["kioclient", "exec", "org.kde.korganizer.desktop"])
+        # KOrganizer on KDE; elsewhere Google Calendar in the browser.
+        if shutil.which("kioclient"):
+            subprocess.Popen(["kioclient", "exec", "org.kde.korganizer.desktop"])
+        elif shutil.which("xdg-open"):
+            subprocess.Popen(["xdg-open", "https://calendar.google.com"])

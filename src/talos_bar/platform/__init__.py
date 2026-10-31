@@ -11,18 +11,34 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtCore import QLibraryInfo, Qt
+from PySide6.QtGui import QGuiApplication, QScreen, QWindow
+
+
+def _layer_shell_qt_installed() -> bool:
+    """Whether layer-shell-qt's Qt plugin is on Qt's plugin path.
+
+    PySide6 from PyPI does not ship it; without it the layer-shell
+    integration and the org.kde.layershell QML import both fail to load.
+    """
+    dirs = [d for d in os.environ.get("QT_PLUGIN_PATH", "").split(os.pathsep) if d]
+    dirs.append(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))
+    return any(Path(d, "wayland-shell-integration", "liblayer-shell.so").is_file() for d in dirs)
 
 
 def use_layer_shell() -> bool:
     """Decide before QGuiApplication exists: Qt reads the shell integration at startup."""
+    # GNOME's compositor does not implement wlr-layer-shell.
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":")
     return (
         sys.platform == "linux"
         and bool(os.environ.get("WAYLAND_DISPLAY"))
         and os.environ.get("QT_QPA_PLATFORM", "wayland").startswith("wayland")
         and os.environ.get("TALOS_BAR_LAYER_SHELL", "1") != "0"
+        and "GNOME" not in desktop
+        and _layer_shell_qt_installed()
     )
 
 
@@ -36,7 +52,7 @@ def prepare() -> str:
     return "Bar.qml"
 
 
-def target_screen():
+def target_screen() -> QScreen:
     """The screen named by TALOS_BAR_SCREEN (e.g. HDMI-A-1), else the primary.
 
     Qt on Wayland does not always learn the compositor's primary output: on

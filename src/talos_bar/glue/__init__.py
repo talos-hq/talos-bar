@@ -19,10 +19,10 @@ import subprocess
 import sys
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict, cast
 
 
 class Rich(TypedDict, total=False):
@@ -40,7 +40,7 @@ ClickFn = Callable[["Context"], None]
 # key it is drawn by the built-in ListPopup.qml ({title, subtitle, rows:
 # [{text, subtext, icon, url}]}); otherwise "component" names a .qml file
 # beside the glue module (or a built-in one) that draws it.
-PopupFn = Callable[["Context"], dict[str, Any]]
+PopupFn = Callable[["Context"], Mapping[str, object]]
 # Called from a popup's QML through bar.action(id, name, payload).
 ActionFn = Callable[["Context", str], None]
 
@@ -64,7 +64,7 @@ class Item:
 @dataclass
 class Context:
     os: str = sys.platform
-    cache: dict[str, Any] = field(default_factory=dict[str, Any])
+    cache: dict[str, object] = field(default_factory=dict[str, object])
 
 
 # Filled while a glue module is imported; read back by load_file().
@@ -149,13 +149,25 @@ def run_script(name: str, *args: str) -> str:
     """
     if str(SCRIPTS) not in sys.path:
         sys.path.insert(0, str(SCRIPTS))
-    module = importlib.import_module(name)
-    main: Callable[..., object] = module.main
-    takes_argv = bool(inspect.signature(main).parameters)
     out = io.StringIO()
-    with _script_lock, contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
-        main([name, *args]) if takes_argv else main()
+    # Import under the lock too: forget_scripts() must not drop a module
+    # (or its siblings) while another thread is part-way through importing it.
+    with _script_lock:
+        module = importlib.import_module(name)
+        main = cast("Callable[..., object]", getattr(module, "main"))  # noqa: B009
+        takes_argv = bool(inspect.signature(main).parameters)
+        with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+            main([name, *args]) if takes_argv else main()
     return out.getvalue()
+
+
+def forget_scripts() -> None:
+    """Drop imported scripts so the next run_script() picks up edits."""
+    with _script_lock:
+        for name, module in list(sys.modules.items()):
+            path: object = getattr(module, "__file__", None)
+            if isinstance(path, str) and Path(path).parent == SCRIPTS:
+                del sys.modules[name]
 
 
 def id_of(fn: object) -> int:

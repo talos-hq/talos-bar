@@ -1,7 +1,7 @@
 """Exercise the real QML with pointer events, including periodic glue refreshes."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from itertools import pairwise
 from pathlib import Path
 from typing import cast
@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QUrl
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, Qt, QUrl
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QJSValue, QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem, QQuickWindow
@@ -64,6 +64,17 @@ def tasks_popup(ctx): return {"title": "Tasks", "rows": []}
     app.processEvents()
 
 
+def prop(obj: QObject, name: str) -> object:
+    """A Qt property; PySide types every one as Any."""
+    return cast("object", obj.property(name))
+
+
+def number(obj: QObject, name: str) -> float:
+    value = prop(obj, name)
+    assert isinstance(value, (int, float)), (name, value)
+    return float(value)
+
+
 def tab(window: QQuickWindow, item_id: str) -> QQuickItem:
     def walk(item: QQuickItem) -> Iterator[QQuickItem]:
         yield item
@@ -71,9 +82,9 @@ def tab(window: QQuickWindow, item_id: str) -> QQuickItem:
             yield from walk(child)
 
     for t in walk(window.contentItem()):
-        model = t.property("model")
+        model = prop(t, "model")
         if isinstance(model, QJSValue):
-            model = model.toVariant()
+            model = cast("object", model.toVariant())
         if isinstance(model, dict) and cast("dict[str, object]", model).get("id") == item_id:
             return t
     raise AssertionError(f"Missing tab {item_id}")
@@ -203,7 +214,7 @@ def test_popup_waits_for_content_before_mapping(ui: UI, click: bool) -> None:
     original = bar._items["clock"].popup  # pyright: ignore[reportPrivateUsage]
     assert original is not None
 
-    def delayed(ctx: glue.Context) -> dict[str, object]:
+    def delayed(ctx: glue.Context) -> Mapping[str, object]:
         assert release.wait(timeout=5)
         return original(ctx)
 
@@ -269,7 +280,7 @@ def test_all_cards_drop_from_the_bar_without_horizontal_motion(ui: UI, kind: str
     def sample() -> None:
         if popup.isVisible() and frame.opacity() > 0:
             position = frame.mapToScene(QPointF(0, 0))
-            if position.y() + frame.height() <= float(popup.property("anchorY")):
+            if position.y() + frame.height() <= number(popup, "anchorY"):
                 return  # the surface is mapped, but the card is still fully clipped
             mask = popup.mask().boundingRect()
             samples.append((position.x(), position.y(), frame.height(), mask.y(), mask.bottom()))
@@ -289,7 +300,7 @@ def test_all_cards_drop_from_the_bar_without_horizontal_motion(ui: UI, kind: str
     QTest.qWait(800 if kind == "tooltip" else 350)
     assert len(samples) >= 3
     # The card starts behind the bar and emerges downward from its bottom.
-    bottom = float(popup.property("anchorY"))
+    bottom = number(popup, "anchorY")
     assert samples[0][1] < bottom - samples[0][2] * 0.3, samples
     assert abs(samples[-1][1] - bottom) < 0.1
     assert all(abs(s[0] - samples[-1][0]) < 0.1 for s in samples)
@@ -339,7 +350,7 @@ def test_calendar_meeting_details_also_drop_vertically(ui: UI) -> None:
     popup.frameSwapped.connect(sample)
     agenda.setProperty("focusRow", row)
     QTest.qWait(350)
-    bottom = float(popup.property("anchorY"))
+    bottom = number(popup, "anchorY")
     assert len(samples) >= 3
     assert samples[0][1] < bottom - details.height() * 0.3
     assert abs(samples[-1][1] - bottom) < 0.1
@@ -361,7 +372,7 @@ def test_detailed_clock_renders_and_ticks_without_reopening(ui: UI) -> None:
     before = local["time"]
 
     def labels(item: QQuickItem) -> list[str]:
-        text = item.property("text")
+        text = prop(item, "text")
         result = [text] if isinstance(text, str) else []
         for child in item.childItems():
             result.extend(labels(child))
