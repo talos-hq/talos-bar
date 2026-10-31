@@ -124,7 +124,7 @@ class Placement(QObject):
         return [
             {
                 "name": s.name(),
-                "label": f"{s.model() or s.name()}  ·  {s.name()}  ·  {s.size().width()}×{s.size().height()}",
+                "label": f"{s.model() or s.name()}  ·  {s.name()}  ·  {s.size().width()}x{s.size().height()}",
                 "current": s is current,
             }
             for s in QGuiApplication.screens()
