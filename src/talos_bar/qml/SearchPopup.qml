@@ -8,7 +8,10 @@ import QtQuick.Window
 Window {
     id: win
     width: 640
-    height: Math.min(96 + list.count * 48, 520)
+    // A layer surface keeps the size it was shown with, so it stays at the maximum and the
+    // drawn box shrinks inside it; a normal window simply tracks the box.
+    readonly property int boxHeight: Math.min(96 + list.count * 48, 520)
+    height: positioned ? boxHeight : 520
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
     color: "transparent"
     visible: false
@@ -45,7 +48,8 @@ Window {
     onActiveChanged: active ? hadFocus = true : (hadFocus && (visible = false))
 
     Rectangle {
-        anchors.fill: parent
+        width: parent.width
+        height: win.boxHeight
         radius: 12
         color: Theme.window
         border.color: Theme.highlight
