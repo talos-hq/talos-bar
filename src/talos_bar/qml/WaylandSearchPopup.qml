@@ -7,7 +7,6 @@ SearchPopup {
     positioned: false
     LayerShell.Window.scope: "talos-search"
     LayerShell.Window.layer: LayerShell.Window.LayerOverlay
-    LayerShell.Window.anchors: 0
     LayerShell.Window.exclusionZone: -1
     LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityExclusive
 }
