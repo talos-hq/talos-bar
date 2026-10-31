@@ -355,12 +355,18 @@ def main(argv: list[str] | None = None) -> int:
     qml = QML_DIR / platform.prepare()
     app = QGuiApplication(argv or sys.argv)
     app.setApplicationName("talos-bar")
+    # Monitors sleeping take the bar's output, and with it every window;
+    # stay up so Placement can put the bar back when they wake.
+    app.setQuitOnLastWindowClosed(False)
     _use_desktop_theme(app)
     bar = Bar()
     engine = QQmlApplicationEngine()
     bar.engine = engine
     engine.addImageProvider("icon", IconProvider())
     engine.rootContext().setContextProperty("bar", bar)
+    # Created before the QML loads so its menu can bind to it at once.
+    placement = platform.Placement()
+    engine.rootContext().setContextProperty("placement", placement)
     engine.rootContext().setContextProperty("barAlign", os.environ.get("TALOS_BAR_ALIGN", "right"))
     engine.rootContext().setContextProperty("layerShell", qml.name == "WaylandBar.qml")
     engine.warnings.connect(_print_warnings)
@@ -370,5 +376,5 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     root = engine.rootObjects()[0]
     assert isinstance(root, QWindow)
-    platform.dock(root)
+    platform.dock(root, placement)
     return app.exec()

@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QLibraryInfo, Qt
+from PySide6.QtCore import Property, QLibraryInfo, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QScreen, QWindow
 
 
@@ -52,63 +52,101 @@ def prepare() -> str:
     return "Bar.qml"
 
 
-def target_screen() -> QScreen:
-    """The screen named by TALOS_BAR_SCREEN (e.g. HDMI-A-1), else the primary.
+def _state_file() -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return Path(base) / "talos-bar" / "screen"
 
-    Qt on Wayland does not always learn the compositor's primary output: on
-    KWin it can report whichever output was announced first, which puts the
-    bar on a side monitor.
+
+class Placement(QObject):
+    """Which output the bar lives on: chosen by the user, and kept.
+
+    The choice is an output name (HDMI-A-1) saved under XDG_STATE_HOME;
+    TALOS_BAR_SCREEN is only the default until something is chosen. Qt's
+    primary screen is a last resort, because on KWin it can name a side
+    monitor. While the chosen output is gone (asleep, unplugged) the bar
+    waits on another one and goes back as soon as it reappears -- a restart
+    during monitor sleep used to strand it on a side monitor for good.
     """
-    name = os.environ.get("TALOS_BAR_SCREEN", "")
-    for screen in QGuiApplication.screens():
-        if name and screen.name() == name:
-            return screen
-    return QGuiApplication.primaryScreen()
 
+    screensChanged = Signal()
 
-def dock(window: QWindow) -> None:
-    screen = target_screen()
-    window.setScreen(screen)
-    if QGuiApplication.platformName() == "wayland" and use_layer_shell():
-        # Qt re-derives the output from the window position at show time, and
-        # (0, 0) may belong to another monitor; start at the target's origin.
-        window.setPosition(screen.geometry().topLeft())
-        window.show()
-        _follow_named_screen(window)
-        return
-    window.setFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
-    )
-    geo = screen.geometry()
+    def __init__(self) -> None:
+        super().__init__()
+        self._window = QWindow()  # replaced by dock() once QML has loaded
+        self._shown = False
+        try:
+            saved = _state_file().read_text().strip()
+        except OSError:
+            saved = ""
+        self._wanted = saved or os.environ.get("TALOS_BAR_SCREEN", "")
+        app = QGuiApplication.instance()
+        assert isinstance(app, QGuiApplication)
+        app.screenAdded.connect(self._check)
+        # Re-check once Qt has finished re-homing windows off a removed output.
+        app.screenRemoved.connect(lambda _s: QTimer.singleShot(0, self._check))
+        app.primaryScreenChanged.connect(self._check)
 
-    def place() -> None:
-        window.setPosition(geo.x() + (geo.width() - window.width()) // 2, geo.y())
+    def target(self) -> QScreen:
+        for screen in QGuiApplication.screens():
+            if screen.name() == self._wanted:
+                return screen
+        return QGuiApplication.primaryScreen()
 
-    def on_width(_w: int) -> None:
-        place()
+    def _check(self, *_args: object) -> None:
+        self.screensChanged.emit()
+        if self._shown and self._window.screen() is not self.target():
+            self.place()
 
-    window.widthChanged.connect(on_width)
-    place()
-    window.show()
-
-
-def _follow_named_screen(window: QWindow) -> None:
-    """Move back to TALOS_BAR_SCREEN whenever that output (re)appears.
-
-    A restart while the monitors sleep finds the named output missing and
-    falls back to another one; without this the bar stays there for good.
-    A layer surface binds its output when mapped, so remap to move it.
-    """
-    name = os.environ.get("TALOS_BAR_SCREEN", "")
-    if not name:
-        return
-
-    def on_added(screen) -> None:
-        if screen.name() != name or window.screen() is screen:
-            return
-        window.hide()
+    def place(self) -> None:
+        screen = self.target()
+        window = self._window
+        if self._shown:
+            # A layer surface binds its output when it is mapped; remap to move.
+            window.hide()
+        self._shown = True
         window.setScreen(screen)
-        window.setPosition(screen.geometry().topLeft())
+        if QGuiApplication.platformName() == "wayland" and use_layer_shell():
+            # Qt re-derives the output from the window position at show time, and
+            # (0, 0) may belong to another monitor; start at the target's origin.
+            window.setPosition(screen.geometry().topLeft())
+        else:
+            self._centre()
         window.show()
+        self.screensChanged.emit()
 
-    QGuiApplication.instance().screenAdded.connect(on_added)
+    def _centre(self) -> None:
+        geo = self._window.screen().geometry()
+        self._window.setPosition(geo.x() + (geo.width() - self._window.width()) // 2, geo.y())
+
+    @Property(list, notify=screensChanged)  # pyright: ignore[reportArgumentType]
+    def screens(self) -> list[dict[str, object]]:
+        current = self._window.screen()
+        return [
+            {
+                "name": s.name(),
+                "label": f"{s.model() or s.name()}  ·  {s.name()}  ·  {s.size().width()}×{s.size().height()}",
+                "current": s is current,
+            }
+            for s in QGuiApplication.screens()
+        ]
+
+    @Slot(str)
+    def moveTo(self, name: str) -> None:
+        self._wanted = name
+        try:
+            path = _state_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name + "\n")
+        except OSError as e:
+            print(f"talos-bar: cannot save the screen choice: {e}", file=sys.stderr)
+        self.place()
+
+
+def dock(window: QWindow, placement: Placement) -> None:
+    placement._window = window  # pyright: ignore[reportPrivateUsage]
+    if not (QGuiApplication.platformName() == "wayland" and use_layer_shell()):
+        window.setFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+        )
+        window.widthChanged.connect(lambda _w: placement._centre())  # pyright: ignore[reportPrivateUsage]
+    placement.place()
