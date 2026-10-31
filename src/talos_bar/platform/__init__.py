@@ -74,6 +74,7 @@ def dock(window: QWindow) -> None:
         # (0, 0) may belong to another monitor; start at the target's origin.
         window.setPosition(screen.geometry().topLeft())
         window.show()
+        _follow_named_screen(window)
         return
     window.setFlags(
         Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
@@ -89,3 +90,25 @@ def dock(window: QWindow) -> None:
     window.widthChanged.connect(on_width)
     place()
     window.show()
+
+
+def _follow_named_screen(window: QWindow) -> None:
+    """Move back to TALOS_BAR_SCREEN whenever that output (re)appears.
+
+    A restart while the monitors sleep finds the named output missing and
+    falls back to another one; without this the bar stays there for good.
+    A layer surface binds its output when mapped, so remap to move it.
+    """
+    name = os.environ.get("TALOS_BAR_SCREEN", "")
+    if not name:
+        return
+
+    def on_added(screen) -> None:
+        if screen.name() != name or window.screen() is screen:
+            return
+        window.hide()
+        window.setScreen(screen)
+        window.setPosition(screen.geometry().topLeft())
+        window.show()
+
+    QGuiApplication.instance().screenAdded.connect(on_added)
