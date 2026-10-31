@@ -71,11 +71,11 @@ Item {
     // ── The list ──
     ColumnLayout {
         id: list
-        width: root.empty ? 240 : 440
+        width: root.empty ? 360 : 440
         spacing: 10
 
+        // Header, shown even with no meetings so Launch meeting is always there.
         RowLayout {
-            visible: !root.empty
             Layout.fillWidth: true
             spacing: 10
             Image { source: "image://icon/view-calendar-agenda"; sourceSize: Qt.size(26, 26) }
@@ -85,6 +85,14 @@ Item {
                 Text_ { text: root.agenda.date || "Calendar"; opacity: 0.7 }
             }
             Item { Layout.fillWidth: true }
+            // Start a new Zoom meeting hosted by the signed-in user; the web
+            // page hands off to the Zoom app.
+            Button {
+                text: "Launch meeting"
+                icon.source: "image://icon/camera-video"
+                icon.color: "transparent"
+                onClicked: { Qt.openUrlExternally("https://zoom.us/start/videomeeting"); bar.close(); }
+            }
             ToolButton {
                 icon.source: "image://icon/view-calendar-day"
                 icon.color: "transparent"
@@ -92,16 +100,6 @@ Item {
                 ToolTip.text: "Open calendar"
                 onClicked: { bar.action("agenda", "open_calendar", ""); bar.close(); }
             }
-        }
-
-        // Start a new Zoom meeting hosted by the signed-in user; the web page
-        // hands off to the Zoom app.
-        Button {
-            Layout.fillWidth: true
-            text: "Launch meeting"
-            icon.source: "image://icon/camera-video"
-            icon.color: "transparent"
-            onClicked: { Qt.openUrlExternally("https://zoom.us/start/videomeeting"); bar.close(); }
         }
 
         // Headliner: the meeting the tab shows, with one big Join button.
