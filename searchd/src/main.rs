@@ -54,7 +54,12 @@ impl Vox {
     async fn run(&self, args: &[&str], timeout: Duration) -> Option<Vec<u8>> {
         let spec = kernal_api::SpawnSpec::new(&self.bin).args(args);
         match kernal_api::run_bounded_command_async(spec, timeout, 1 << 16).await {
-            Ok(out) => Some(out.stdout),
+            Ok(out) if out.exit.raw_code() == 0 => Some(out.stdout),
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                eprintln!("talos-searchd: {} {args:?} exited {}: {}", self.bin, out.exit.raw_code(), stderr.trim());
+                None
+            }
             Err(err) => {
                 eprintln!("talos-searchd: {} {args:?}: {err}", self.bin);
                 None
