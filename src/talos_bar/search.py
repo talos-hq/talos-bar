@@ -70,16 +70,23 @@ class _Line(QObject):
 
 
 class Search(QObject):
-    """Exposed to QML as `search`: query text in, hits out, `show` when the hotkey fires."""
+    """Exposed to QML as `search`: query text in, hits out, `show` when the hotkey fires.
+
+    Dictation is push-to-talk: `dictate(True)` starts talos-vox recording, `dictate(False)` stops
+    it and `dictated` later carries the transcript.
+    """
 
     hitsChanged = Signal()
     show = Signal()
     onlineChanged = Signal()
+    listeningChanged = Signal()
+    dictated = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._hits: list[dict] = []
         self._online = False
+        self._listening = False
         self.requests = _Line(self)
         self.requests.message.connect(self._reply)
         self.requests.connected.connect(lambda: self._set_online(True))
@@ -97,6 +104,18 @@ class Search(QObject):
     @Property(bool, notify=onlineChanged)  # pyright: ignore[reportArgumentType]
     def online(self) -> bool:
         return self._online
+
+    @Property(bool, notify=listeningChanged)  # pyright: ignore[reportArgumentType]
+    def listening(self) -> bool:
+        return self._listening
+
+    @Slot(bool)
+    def dictate(self, on: bool) -> None:
+        if on == self._listening:
+            return
+        if self.requests.send({"op": "dictate", "action": "start" if on else "stop"}):
+            self._listening = on
+            self.listeningChanged.emit()
 
     @Property("QVariantList", notify=hitsChanged)  # pyright: ignore[reportArgumentType]
     def hits(self) -> list[dict]:
@@ -122,3 +141,5 @@ class Search(QObject):
     def _event(self, msg: dict) -> None:
         if msg.get("event") == "show":
             self.show.emit()
+        elif msg.get("event") == "dictation":
+            self.dictated.emit(msg.get("text", ""))

@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import QtQuick.Window
 
 // Super+Space search: a frameless, centered box. Typing queries talos-searchd; Enter
-// activates the selected hit; Escape or losing focus hides it.
+// activates the selected hit; Escape or losing focus hides it. Holding the mic button (or
+// Ctrl+M, press again to stop) dictates through talos-vox into the field.
 Window {
     id: win
     width: 640
@@ -35,17 +36,27 @@ Window {
         field.forceActiveFocus()
     }
 
+    function close() {
+        search.dictate(false)
+        visible = false
+    }
+
     function activate(index) {
         if (index < 0 || index >= list.count) return
         search.activate(search.hits[index].id)
-        visible = false
+        close()
     }
 
     Connections {
         target: search
-        function onShow() { win.visible ? win.visible = false : win.open() }
+        function onShow() { win.visible ? win.close() : win.open() }
+        function onDictated(text) {
+            if (!win.visible) return
+            field.text = text
+            field.cursorPosition = text.length
+        }
     }
-    onActiveChanged: active ? hadFocus = true : (hadFocus && (visible = false))
+    onActiveChanged: active ? hadFocus = true : (hadFocus && close())
 
     Rectangle {
         width: parent.width
@@ -60,16 +71,36 @@ Window {
             anchors.margins: 12
             spacing: 8
 
-            TextField {
-                id: field
-                Layout.fillWidth: true
-                font.pixelSize: 20
-                placeholderText: search.online ? "Search apps, go/ links…" : "talos-searchd is not running"
-                onTextChanged: { search.query(text); list.currentIndex = 0 }
-                Keys.onEscapePressed: win.visible = false
-                Keys.onDownPressed: list.incrementCurrentIndex()
-                Keys.onUpPressed: list.decrementCurrentIndex()
-                onAccepted: win.activate(list.currentIndex)
+            RowLayout {
+                spacing: 8
+                TextField {
+                    id: field
+                    Layout.fillWidth: true
+                    font.pixelSize: 20
+                    placeholderText: !search.online ? "talos-searchd is not running"
+                        : search.listening ? "Listening…" : "Search apps, go/ links…"
+                    onTextChanged: { search.query(text); list.currentIndex = 0 }
+                    Keys.onEscapePressed: win.close()
+                    Keys.onDownPressed: list.incrementCurrentIndex()
+                    Keys.onUpPressed: list.decrementCurrentIndex()
+                    onAccepted: win.activate(list.currentIndex)
+                    Shortcut {
+                        sequence: "Ctrl+M"
+                        onActivated: search.dictate(!search.listening)
+                    }
+                }
+                ToolButton {
+                    id: mic
+                    icon.name: "audio-input-microphone"
+                    checkable: false
+                    highlighted: search.listening
+                    enabled: search.online
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Hold to talk (Ctrl+M)"
+                    onPressed: search.dictate(true)
+                    onReleased: search.dictate(false)
+                    onCanceled: search.dictate(false)
+                }
             }
 
             ListView {

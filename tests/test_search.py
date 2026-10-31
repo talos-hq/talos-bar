@@ -60,3 +60,45 @@ def test_queries_and_show_events_round_trip(app, monkeypatch):
     assert spin_until(lambda: client.hits and client.hits[0]["title"] == "FIRE")
     client.query("  ")
     assert client.hits == []
+
+
+def test_push_to_talk_puts_the_transcript_in_dictated(app, monkeypatch):
+    path = f"talos-searchd-dictate-{os.getpid()}"
+    QLocalServer.removeServer(path)
+    monkeypatch.setenv("TALOS_SEARCHD_ENDPOINT", path)
+    server = QLocalServer()
+    assert server.listen(path)
+    actions, clients, subscribers = [], [], []
+
+    def accept():
+        while server.hasPendingConnections():
+            conn = server.nextPendingConnection()
+            clients.append(conn)
+
+            def read(conn=conn):
+                for line in bytes(conn.readAll().data()).splitlines():
+                    req = json.loads(line)
+                    if req["op"] == "subscribe":
+                        subscribers.append(conn)
+                        conn.write(b'{"ok":true}\n')
+                    elif req["op"] == "dictate":
+                        actions.append(req["action"])
+                        conn.write(b'{"ok":true}\n')
+                        if req["action"] == "stop":
+                            for sub in subscribers:
+                                sub.write(b'{"event":"dictation","text":"open firefox"}\n')
+
+            conn.readyRead.connect(read)
+
+    server.newConnection.connect(accept)
+    client = search.Search()
+    heard = []
+    client.dictated.connect(heard.append)
+
+    assert spin_until(lambda: client.online and subscribers)
+    client.dictate(True)
+    assert client.listening
+    client.dictate(False)
+    assert not client.listening
+    assert spin_until(lambda: heard == ["open firefox"])
+    assert actions == ["start", "stop"]

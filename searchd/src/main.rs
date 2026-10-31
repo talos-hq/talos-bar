@@ -7,6 +7,9 @@
 //! - `{"op":"activate","id":"app:firefox.desktop"}` → `{"ok":true}`
 //! - `{"op":"subscribe"}` → `{"ok":true}`, then `{"event":"show"}` per hotkey press
 //! - `{"op":"ping"}` → `{"ok":true}`
+//! - `{"op":"dictate","action":"start"}` → `{"ok":true}`; talos-vox starts recording
+//! - `{"op":"dictate","action":"stop"}` → `{"ok":true}`, then subscribers get
+//!   `{"event":"dictation","text":"..."}` once talos-vox has transcribed it
 
 mod search;
 
@@ -30,11 +33,57 @@ enum Request {
     Activate { id: String },
     Subscribe,
     Ping,
+    Dictate { action: DictateAction },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DictateAction {
+    Start,
+    Stop,
+}
+
+/// Dictation is talos-vox's daemon driven through its CLI: it owns the mic (through kernal-api's
+/// audio capture) and the model, and writes each transcript to a file we name.
+struct Vox {
+    bin: String,
+    transcript: std::path::PathBuf,
+}
+
+impl Vox {
+    async fn run(&self, args: &[&str], timeout: Duration) -> Option<Vec<u8>> {
+        let spec = kernal_api::SpawnSpec::new(&self.bin).args(args);
+        match kernal_api::run_bounded_command_async(spec, timeout, 1 << 16).await {
+            Ok(out) => Some(out.stdout),
+            Err(err) => {
+                eprintln!("talos-searchd: {} {args:?}: {err}", self.bin);
+                None
+            }
+        }
+    }
+
+    async fn start(&self) -> bool {
+        let file = format!("--file={}", self.transcript.display());
+        self.run(&["record", "start", &file, "--no-osd"], Duration::from_secs(5))
+            .await
+            .is_some()
+    }
+
+    /// Stops recording and waits for the transcript; None when there was nothing to transcribe.
+    async fn stop(&self) -> Option<String> {
+        let out = self
+            .run(&["record", "stop", "--wait", "--json", "--timeout", "60"], Duration::from_secs(70))
+            .await?;
+        let outcome: serde_json::Value = serde_json::from_slice(&out).ok()?;
+        let text = outcome.get("text")?.as_str()?.trim();
+        (!text.is_empty()).then(|| text.to_owned())
+    }
 }
 
 struct State {
     apps: Mutex<(Instant, Vec<AppEntry>)>,
-    events: broadcast::Sender<&'static str>,
+    events: broadcast::Sender<serde_json::Value>,
+    vox: Vox,
 }
 
 impl State {
@@ -77,13 +126,25 @@ where
             }
             Ok(Request::Activate { id }) => json!({ "ok": state.activate(&id).await }),
             Ok(Request::Ping) => json!({ "ok": true }),
+            Ok(Request::Dictate { action: DictateAction::Start }) => {
+                json!({ "ok": state.vox.start().await })
+            }
+            Ok(Request::Dictate { action: DictateAction::Stop }) => {
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    if let Some(text) = state.vox.stop().await {
+                        let _ = state.events.send(json!({ "event": "dictation", "text": text }));
+                    }
+                });
+                json!({ "ok": true })
+            }
             Ok(Request::Subscribe) => {
                 if write.write_all(b"{\"ok\":true}\n").await.is_err() {
                     return;
                 }
                 let mut events = state.events.subscribe();
                 while let Ok(event) = events.recv().await {
-                    let line = format!("{}\n", json!({ "event": event }));
+                    let line = format!("{event}\n");
                     if write.write_all(line.as_bytes()).await.is_err() {
                         return;
                     }
@@ -101,10 +162,14 @@ where
 }
 
 /// The per-user endpoint: a socket in the runtime dir, or a named pipe where that is the transport.
-fn default_endpoint() -> String {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+fn runtime_dir() -> std::path::PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+fn default_endpoint() -> String {
+    let dir = runtime_dir();
     kernal_api::platform::ipc::EndpointAddressCandidates::new(
         Some("talos-searchd".into()),
         Some(dir.join("talos-searchd.sock")),
@@ -113,7 +178,7 @@ fn default_endpoint() -> String {
     .unwrap_or_else(|| "talos-searchd".into())
 }
 
-async fn hotkey_loop(chord: String, events: broadcast::Sender<&'static str>) {
+async fn hotkey_loop(chord: String, events: broadcast::Sender<serde_json::Value>) {
     let options = match Chord::parse(&chord)
         .and_then(|c| HotkeyOptions::new("talos-search", "Open talos search", c))
     {
@@ -127,7 +192,7 @@ async fn hotkey_loop(chord: String, events: broadcast::Sender<&'static str>) {
     eprintln!("talos-searchd: hotkey {chord} registered");
     while handle.is_active() {
         if let Some(HotkeyEvent::Pressed) = handle.next_event_within(Duration::from_secs(3600)).await {
-            let _ = events.send("show");
+            let _ = events.send(json!({ "event": "show" }));
         }
     }
 }
@@ -136,18 +201,20 @@ async fn hotkey_loop(chord: String, events: broadcast::Sender<&'static str>) {
 async fn main() -> std::io::Result<()> {
     let mut endpoint = default_endpoint();
     let mut hotkey = Some("Meta+Space".to_owned());
+    let mut vox_bin = "voxtype".to_owned();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--endpoint" => endpoint = args.next().expect("--endpoint takes a value"),
             "--hotkey" => hotkey = Some(args.next().expect("--hotkey takes a chord")),
             "--no-hotkey" => hotkey = None,
+            "--vox" => vox_bin = args.next().expect("--vox takes a program"),
             "--print-endpoint" => {
                 println!("{endpoint}");
                 return Ok(());
             }
             _ => {
-                eprintln!("usage: talos-searchd [--endpoint E] [--hotkey CHORD | --no-hotkey]");
+                eprintln!("usage: talos-searchd [--endpoint E] [--hotkey CHORD | --no-hotkey] [--vox PROGRAM]");
                 std::process::exit(2);
             }
         }
@@ -156,6 +223,10 @@ async fn main() -> std::io::Result<()> {
     let state = Arc::new(State {
         apps: Mutex::new((Instant::now(), Vec::new())),
         events: events.clone(),
+        vox: Vox {
+            bin: vox_bin,
+            transcript: runtime_dir().join("talos-search-dictation.txt"),
+        },
     });
     let endpoint = IpcEndpoint::new(endpoint)?;
     endpoint.retire()?;
