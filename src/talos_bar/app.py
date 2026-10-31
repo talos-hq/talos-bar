@@ -379,5 +379,6 @@ def main(argv: list[str] | None = None) -> int:
     platform.dock(root, placement)
     # The Super+Space popup: its own window, driven by talos-searchd.
     engine.rootContext().setContextProperty("search", search.Search(app))
-    engine.load(QUrl.fromLocalFile(str(QML_DIR / "SearchPopup.qml")))
+    popup = "WaylandSearchPopup.qml" if qml.name == "WaylandBar.qml" else "SearchPopup.qml"
+    engine.load(QUrl.fromLocalFile(str(QML_DIR / popup)))
     return app.exec()

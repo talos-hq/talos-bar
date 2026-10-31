@@ -15,12 +15,16 @@ Window {
     // Wayland may refuse focus to a window the user did not click; only a popup that actually
     // gained focus hides when it loses it, so a refused activation still leaves it on screen.
     property bool hadFocus: false
+    // Layer-shell surfaces are placed by the compositor, not by x/y.
+    property bool positioned: true
 
     function open() {
         field.text = ""
         search.query("")
-        x = Screen.virtualX + (Screen.width - width) / 2
-        y = Screen.virtualY + Screen.height / 4
+        if (positioned) {
+            x = Screen.virtualX + (Screen.width - width) / 2
+            y = Screen.virtualY + Screen.height / 4
+        }
         hadFocus = false
         visible = true
         raise()
