@@ -39,7 +39,8 @@ jobs:
         run: uv run --locked pytest -q tests/test_search.py
 
   # The popup's dictation engine. talos-vox's own fork CI is not enabled, so its portability
-  # probe runs here: audio capture goes through kernal-api; this shows what else blocks the build.
+  # proof runs here: capture, IPC and text input go through kernal-api, and the daemon binary
+  # is driven end to end over its control channel (named pipe on Windows, socket on macOS).
   voice:
     strategy:
       fail-fast: false
@@ -47,7 +48,6 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -56,11 +56,15 @@ jobs:
       # openvino-rs vendors upstream OpenVINO as a submodule whose docs exceed MAX_PATH.
       - run: git config --global core.longpaths true
       - uses: zackees/setup-soldr@v0
-      - name: talos-vox builds with kernal-api audio
+      - name: build voxtype with kernal-api
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-        run: soldr cargo check --features kernal-api --lib --keep-going
-      - name: kernal-api capture tests
+        run: soldr cargo build --locked --features kernal-api --bin voxtype
+      - name: capture, control and desktop-input tests
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-        run: soldr cargo test --features kernal-api --lib audio::kernal_capture
+        run: soldr cargo test --locked --features kernal-api --lib -- audio::kernal_capture control:: output::desktop_input
+      - name: daemon end to end over the control channel
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: soldr cargo test --locked --features kernal-api --test control_channel -- --nocapture
