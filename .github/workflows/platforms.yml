@@ -63,7 +63,7 @@ jobs:
       - name: capture, control and desktop-input tests
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-        run: soldr cargo test --locked --features kernal-api --lib -- audio::kernal_capture control:: output::desktop_input
+        run: "soldr cargo test --locked --features kernal-api --lib -- audio::kernal_capture control:: output::desktop_input"
       - name: daemon end to end over the control channel
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
