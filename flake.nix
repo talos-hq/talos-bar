@@ -43,6 +43,9 @@
           };
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ pkgs.dbus ];
+          # The sandbox has no installed applications to catalog; CI runs this
+          # test on real Linux, Windows and macOS hosts.
+          checkFlags = [ "--skip=lists_this_hosts_installed_apps" ];
           meta.mainProgram = "talos-searchd";
         };
         default = talos-bar;
