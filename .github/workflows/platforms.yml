@@ -37,3 +37,34 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --locked pytest -q tests/test_search.py
+
+  # The popup's dictation engine. talos-vox's own fork CI is not enabled, so its portability
+  # proof runs here: capture, IPC and text input go through kernal-api, and the daemon binary
+  # is driven end to end over its control channel (named pipe on Windows, socket on macOS).
+  voice:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: talos-hq/talos-vox
+          ref: feat/kernal-api-audio
+      # openvino-rs vendors upstream OpenVINO as a submodule whose docs exceed MAX_PATH.
+      - run: git config --global core.longpaths true
+      - uses: zackees/setup-soldr@v0
+      - name: build voxtype with kernal-api
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: soldr cargo build --locked --features kernal-api --bin voxtype
+      - name: capture, control and desktop-input tests
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: "soldr cargo test --locked --features kernal-api --lib -- audio::kernal_capture control:: output::desktop_input"
+      - name: daemon end to end over the control channel
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: soldr cargo test --locked --features kernal-api --test control_channel -- --nocapture
