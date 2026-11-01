@@ -26,7 +26,7 @@ from PySide6.QtGui import QFont, QGuiApplication, QIcon, QPixmap, QRegion, QWind
 from PySide6.QtQml import QQmlApplicationEngine, QQmlError, QQmlImageProviderBase
 from PySide6.QtQuick import QQuickImageProvider
 
-from talos_bar import glue, platform
+from talos_bar import glue, platform, search
 
 QML_DIR = Path(__file__).parent / "qml"
 
@@ -377,4 +377,8 @@ def main(argv: list[str] | None = None) -> int:
     root = engine.rootObjects()[0]
     assert isinstance(root, QWindow)
     platform.dock(root, placement)
+    # The Super+Space popup: its own window, driven by talos-searchd.
+    engine.rootContext().setContextProperty("search", search.Search(app))
+    popup = "WaylandSearchPopup.qml" if qml.name == "WaylandBar.qml" else "SearchPopup.qml"
+    engine.load(QUrl.fromLocalFile(str(QML_DIR / popup)))
     return app.exec()

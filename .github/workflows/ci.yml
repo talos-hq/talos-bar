@@ -1,0 +1,32 @@
+# Quick PR gate (forge-ci/ci.yml policy): Linux only. Windows and macOS run in platforms.yml.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The XDG GlobalShortcuts portal client links libdbus; the bar's Qt tests run offscreen.
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config libegl1 libxkbcommon0
+      - uses: zackees/setup-soldr@v0
+      - name: talos-searchd tests (real daemon over a Unix socket)
+        working-directory: searchd
+        run: soldr cargo test --locked
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - name: talos-bar tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --locked pytest -q tests/test_search.py

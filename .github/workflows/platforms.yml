@@ -1,0 +1,39 @@
+# Windows and macOS proof for the search popup, kept out of the quick Linux gate (forge-ci/ci.yml
+# policy). The daemon tests start the real talos-searchd and talk to it over that host's
+# transport (a named pipe on Windows, a Unix socket on macOS), and find installed apps through
+# kernal-api's catalog (Start Menu shortcuts, .app bundles). The client tests drive the popup's
+# QLocalSocket side against a stand-in daemon on the same transport.
+name: platforms
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  search:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: zackees/setup-soldr@v0
+      - name: talos-searchd tests
+        working-directory: searchd
+        run: soldr cargo test --locked
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - name: talos-bar search client tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --locked pytest -q tests/test_search.py
