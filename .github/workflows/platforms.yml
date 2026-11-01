@@ -37,3 +37,24 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --locked pytest -q tests/test_search.py
+
+  # The popup's dictation engine. talos-vox's own fork CI is not enabled, so its portability
+  # probe runs here: audio capture goes through kernal-api; this shows what else blocks the build.
+  voice:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: talos-hq/talos-vox
+          ref: feat/kernal-api-audio
+      - uses: zackees/setup-soldr@v0
+      - name: talos-vox builds with kernal-api audio
+        run: soldr cargo check --features kernal-api --lib --keep-going
+      - name: kernal-api capture tests
+        run: soldr cargo test --features kernal-api --lib audio::kernal_capture
