@@ -88,6 +88,8 @@ impl Vox {
 struct State {
     apps: Mutex<(Instant, Vec<AppEntry>)>,
     events: broadcast::Sender<serde_json::Value>,
+    /// App-catalog id that opens `url:` hits, e.g. `brave-browser.desktop`.
+    browser: Option<String>,
     vox: Vox,
 }
 
@@ -102,7 +104,7 @@ impl State {
 
     async fn activate(&self, id: &str) -> bool {
         if let Some(uri) = id.strip_prefix("url:") {
-            return app_catalog::open_uri(uri).await.is_ok();
+            return self.open_url(uri).await;
         }
         let Some(app_id) = id.strip_prefix("app:") else {
             return false;
@@ -112,6 +114,19 @@ impl State {
             Some(app) => app_catalog::launch(app).await.is_ok(),
             None => false,
         }
+    }
+
+    /// Links open in a new window of `--browser` when it is installed, else the default handler.
+    async fn open_url(&self, uri: &str) -> bool {
+        if let Some(browser) = &self.browser {
+            let apps = self.apps().await;
+            if let Some(app) = apps.iter().find(|a| &a.id == browser) {
+                let options = app_catalog::OpenOptions { new_window: true };
+                return app_catalog::open_uri_with(app, uri, options).await.is_ok();
+            }
+            eprintln!("talos-searchd: browser {browser} is not installed; using the default");
+        }
+        app_catalog::open_uri(uri).await.is_ok()
     }
 }
 
@@ -207,19 +222,21 @@ async fn main() -> std::io::Result<()> {
     let mut endpoint = default_endpoint();
     let mut hotkey = Some("Meta+Space".to_owned());
     let mut vox_bin = "voxtype".to_owned();
+    let mut browser = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--endpoint" => endpoint = args.next().expect("--endpoint takes a value"),
             "--hotkey" => hotkey = Some(args.next().expect("--hotkey takes a chord")),
             "--no-hotkey" => hotkey = None,
+            "--browser" => browser = Some(args.next().expect("--browser takes an app id")),
             "--vox" => vox_bin = args.next().expect("--vox takes a program"),
             "--print-endpoint" => {
                 println!("{endpoint}");
                 return Ok(());
             }
             _ => {
-                eprintln!("usage: talos-searchd [--endpoint E] [--hotkey CHORD | --no-hotkey] [--vox PROGRAM]");
+                eprintln!("usage: talos-searchd [--endpoint E] [--hotkey CHORD | --no-hotkey] [--vox PROGRAM] [--browser APP_ID]");
                 std::process::exit(2);
             }
         }
@@ -228,6 +245,7 @@ async fn main() -> std::io::Result<()> {
     let state = Arc::new(State {
         apps: Mutex::new((Instant::now(), Vec::new())),
         events: events.clone(),
+        browser,
         vox: Vox {
             bin: vox_bin,
             transcript: runtime_dir().join("talos-search-dictation.txt"),

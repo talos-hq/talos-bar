@@ -374,7 +374,7 @@ dependencies = [
 [[package]]
 name = "kernal-api"
 version = "0.1.36"
-source = "git+https://github.com/forge-ci/kernal-api?branch=main#7b7360c5040a97232a46e6fe03b00fdd96d05787"
+source = "git+https://github.com/forge-ci/kernal-api?branch=main#28742afbabec245429c9f54b7dc21f840dda6bcb"
 dependencies = [
  "blake3",
  "dirs",
