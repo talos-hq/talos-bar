@@ -53,8 +53,14 @@ jobs:
         with:
           repository: talos-hq/talos-vox
           ref: feat/kernal-api-audio
+      # openvino-rs vendors upstream OpenVINO as a submodule whose docs exceed MAX_PATH.
+      - run: git config --global core.longpaths true
       - uses: zackees/setup-soldr@v0
       - name: talos-vox builds with kernal-api audio
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: soldr cargo check --features kernal-api --lib --keep-going
       - name: kernal-api capture tests
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: soldr cargo test --features kernal-api --lib audio::kernal_capture
