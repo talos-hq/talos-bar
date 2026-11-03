@@ -29,4 +29,9 @@ jobs:
       - name: talos-bar tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --locked pytest -q tests/test_search.py
+        run: uv run --locked pytest -q tests
+      - name: Python lint and types
+        run: |
+          uv run --locked ruff check src tests
+          uv run --locked ruff format --check src tests
+          uv run --locked basedpyright

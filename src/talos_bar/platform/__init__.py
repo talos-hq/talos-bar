@@ -82,8 +82,12 @@ class Placement(QObject):
         app = QGuiApplication.instance()
         assert isinstance(app, QGuiApplication)
         app.screenAdded.connect(self._check)
+
         # Re-check once Qt has finished re-homing windows off a removed output.
-        app.screenRemoved.connect(lambda _s: QTimer.singleShot(0, self._check))
+        def screen_removed(_screen: QScreen) -> None:
+            QTimer.singleShot(0, self._check)
+
+        app.screenRemoved.connect(screen_removed)
         app.primaryScreenChanged.connect(self._check)
 
     def target(self) -> QScreen:
@@ -148,5 +152,9 @@ def dock(window: QWindow, placement: Placement) -> None:
         window.setFlags(
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
         )
-        window.widthChanged.connect(lambda _w: placement._centre())  # pyright: ignore[reportPrivateUsage]
+
+        def width_changed(_width: int) -> None:
+            placement._centre()  # pyright: ignore[reportPrivateUsage]
+
+        window.widthChanged.connect(width_changed)
     placement.place()

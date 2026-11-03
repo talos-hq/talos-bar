@@ -15,6 +15,20 @@ Status: design phase. See:
 - [docs/DESIGN.md](docs/DESIGN.md) — architecture and decisions
 - [docs/MIGRATION.md](docs/MIGRATION.md) — moving the NixOS panel widgets here
 
+## Editing tasks and notes
+
+The Tasks popup edits `TASKS.md` as plain text. Hover previews do not take the
+keyboard; click the Tasks tab or inside its editor to start typing. Further
+editor clicks keep it open. Edits save locally after 1.5 seconds without typing
+and when the popup closes; the separate tasks-sync timer pushes commits.
+
+A failed save keeps the draft while the bar is running, including after closing
+and reopening the popup. Use **Retry save** to try again, or **Discard draft and
+reload** to replace the draft with the current file. If another process changes
+the file, saving stops with a conflict instead of overwriting that change.
+Review or copy your draft before discarding it. Drafts are not a substitute for
+a successful save and do not survive restarting the bar.
+
 ## Development
 
 ```sh

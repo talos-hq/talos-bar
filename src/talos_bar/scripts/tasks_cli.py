@@ -158,17 +158,23 @@ def main(argv: list[str]) -> int:
         )
         return 0
     if cmd == "read":
-        print(FILE.read_text() if FILE.exists() else "")
+        print(FILE.read_text() if FILE.exists() else "", end="")
         return 0
     if cmd == "save64":
         # The widget's editor: the whole file, base64-encoded.
         text = base64.b64decode(argv[2] if len(argv) > 2 else "").decode()
-        text = text.rstrip("\n") + "\n"
-        if FILE.exists() and FILE.read_text() == text:
-            return 0
-        FILE.write_text(text)
-        git("add", "TASKS.md")
-        git("commit", "-q", "-m", "Edit tasks")
+        current = FILE.read_text() if FILE.exists() else ""
+        if len(argv) > 3:
+            expected = base64.b64decode(argv[3]).decode()
+            if current != expected and current != text:
+                raise RuntimeError("TASKS.md changed outside this editor; draft kept")
+        if current != text or not FILE.exists():
+            FILE.write_text(text)
+        if not git("add", "TASKS.md"):
+            raise RuntimeError("Could not stage TASKS.md; draft kept")
+        if not git("diff", "--cached", "--quiet", "--", "TASKS.md"):
+            if not git("commit", "-q", "-m", "Edit tasks", "--only", "--", "TASKS.md"):
+                raise RuntimeError("Could not commit TASKS.md; draft kept")
         return 0
     lines, tasks = read()
     if cmd in ("add", "add64"):

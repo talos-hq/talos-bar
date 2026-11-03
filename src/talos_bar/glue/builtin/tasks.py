@@ -1,5 +1,5 @@
 """TASKS.md checklist, from scripts/tasks_cli.py (carried over from
-~/dev/nixos system/tasks unchanged).
+~/dev/nixos system/tasks).
 
 `list` gives {open, synced, top}; `read` the whole file; `save64 <b64>`
 commits an edit locally (a timer pushes it). Enabled when the tasks clone
@@ -10,6 +10,7 @@ runs an external command instead.
 import base64
 import json
 import os
+from hashlib import sha256
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -18,6 +19,11 @@ from talos_bar.glue import Context, Output, action, every, item, popup, run, run
 CMD = os.environ.get("TALOS_BAR_TASKS_CMD", "")
 REPO = Path(os.environ.get("TASKS_REPO", Path.home() / "dev" / "tasks"))
 ENABLED = bool(CMD) or (REPO / ".git").exists()
+
+
+class _SaveLineage(TypedDict):
+    ancestors: set[bytes]
+    text: str
 
 
 class TaskLine(TypedDict, total=False):
@@ -40,7 +46,11 @@ class Editor(TypedDict):
 
 
 def _tasks(*args: str) -> str:
-    return run([CMD, *args], timeout=25) if CMD else run_script("tasks_cli", *args)
+    if not CMD:
+        return run_script("tasks_cli", *args)
+    result = run([CMD, *args], timeout=25)
+    # The external tasks command's read protocol uses print(file_text).
+    return result.removesuffix("\n") if args == ("read",) else result
 
 
 def _list(ctx: Context) -> TaskList:
@@ -71,9 +81,35 @@ if ENABLED:
     def editor(ctx: Context) -> Editor:
         cached = ctx.cache.get("tasks")
         data = cast("TaskList", cached) if isinstance(cached, dict) else _list(ctx)
-        text = _tasks("read").removesuffix("\n")
+        text = _tasks("read")
         return {"component": "Tasks.qml", "text": text, "synced": data.get("synced", True)}
 
     @action("tasks", "save")
     def save(ctx: Context, payload: str) -> None:
-        _tasks("save64", base64.b64encode(payload.encode()).decode())
+        edit = cast("dict[str, str]", json.loads(payload))
+        text, base = edit["text"], edit["base"]
+        # Each queued edit may use a different acknowledged ancestor. Keep
+        # their hashes and only one document body, rather than full snapshots.
+        cached_chain = ctx.cache.get("tasks_save_chain")
+        # Glue modules are reimported on hot reload; cache plain structural
+        # data so the lineage does not depend on a previous module's class.
+        chain: _SaveLineage | None = (
+            cast("_SaveLineage", cached_chain) if isinstance(cached_chain, dict) else None
+        )
+        current = _tasks("read")
+        base_hash = sha256(base.encode()).digest()
+        follows_own_write = chain is not None and base_hash in chain["ancestors"] and current == chain["text"]
+        if current not in (base, text) and not follows_own_write:
+            raise RuntimeError("TASKS.md changed outside this editor; draft kept")
+        if chain is None or current != chain["text"]:
+            chain = {"ancestors": set(), "text": ""}
+        chain["ancestors"].update((base_hash, sha256(text.encode()).digest()))
+        # A failed commit may still have written this text. Retain its lineage
+        # so a later edit can retry without mistaking our own write for another editor.
+        chain["text"] = text
+        ctx.cache["tasks_save_chain"] = chain
+        encoded = base64.b64encode(text.encode()).decode()
+        if CMD:
+            _tasks("save64", encoded)
+        else:
+            _tasks("save64", encoded, base64.b64encode(current.encode()).decode())

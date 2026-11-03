@@ -12,6 +12,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from PySide6.QtNetwork import QLocalSocket
@@ -52,7 +53,7 @@ class _Line(QObject):
         if not self.retry.isActive():
             self.retry.start()
 
-    def send(self, request: dict) -> bool:
+    def send(self, request: dict[str, object]) -> bool:
         if self.sock.state() != QLocalSocket.LocalSocketState.ConnectedState:
             self.open()
             return False
@@ -64,7 +65,7 @@ class _Line(QObject):
         *lines, self.buf = self.buf.split(b"\n")
         for line in lines:
             try:
-                self.message.emit(json.loads(line))
+                self.message.emit(cast("dict[str, object]", json.loads(line)))
             except ValueError:
                 continue
 
@@ -84,7 +85,7 @@ class Search(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._hits: list[dict] = []
+        self._hits: list[dict[str, object]] = []
         self._online = False
         self._listening = False
         self.requests = _Line(self)
@@ -118,7 +119,7 @@ class Search(QObject):
             self.listeningChanged.emit()
 
     @Property("QVariantList", notify=hitsChanged)  # pyright: ignore[reportArgumentType]
-    def hits(self) -> list[dict]:
+    def hits(self) -> list[dict[str, object]]:
         return self._hits
 
     @Slot(str)
@@ -133,13 +134,13 @@ class Search(QObject):
     def activate(self, hit_id: str) -> None:
         self.requests.send({"op": "activate", "id": hit_id})
 
-    def _reply(self, msg: dict) -> None:
+    def _reply(self, msg: dict[str, object]) -> None:
         if "hits" in msg:
-            self._hits = msg["hits"]
+            self._hits = cast("list[dict[str, object]]", msg["hits"])
             self.hitsChanged.emit()
 
-    def _event(self, msg: dict) -> None:
+    def _event(self, msg: dict[str, object]) -> None:
         if msg.get("event") == "show":
             self.show.emit()
         elif msg.get("event") == "dictation":
-            self.dictated.emit(msg.get("text", ""))
+            self.dictated.emit(cast("str", msg.get("text", "")))
