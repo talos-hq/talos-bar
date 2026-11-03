@@ -98,9 +98,7 @@ if ENABLED:
         )
         current = _tasks("read")
         base_hash = sha256(base.encode()).digest()
-        follows_own_write = (
-            chain is not None and base_hash in chain["ancestors"] and current == chain["text"]
-        )
+        follows_own_write = chain is not None and base_hash in chain["ancestors"] and current == chain["text"]
         if current not in (base, text) and not follows_own_write:
             raise RuntimeError("TASKS.md changed outside this editor; draft kept")
         if chain is None or current != chain["text"]:
