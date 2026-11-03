@@ -7,6 +7,9 @@
 //! - `{"op":"activate","id":"app:firefox.desktop"}` → `{"ok":true}`
 //! - `{"op":"subscribe"}` → `{"ok":true}`, then `{"event":"show"}` per hotkey press
 //! - `{"op":"ping"}` → `{"ok":true}`
+//! - `{"op":"show"}` → `{"ok":true,"subscribers":N}`; subscribers get `{"event":"show"}`, exactly
+//!   as for a hotkey press (the Rust bar's search button)
+//! - `{"op":"status"}` → `{"ok":true,"subscribers":N}`: how many `subscribe` streams are open
 //! - `{"op":"dictate","action":"start"}` → `{"ok":true}`; talos-vox starts recording
 //! - `{"op":"dictate","action":"stop"}` → `{"ok":true}`, then subscribers get
 //!   `{"event":"dictation","text":"..."}` once talos-vox has transcribed it
@@ -33,6 +36,8 @@ enum Request {
     Activate { id: String },
     Subscribe,
     Ping,
+    Show,
+    Status,
     Dictate { action: DictateAction },
 }
 
@@ -146,6 +151,11 @@ where
             }
             Ok(Request::Activate { id }) => json!({ "ok": state.activate(&id).await }),
             Ok(Request::Ping) => json!({ "ok": true }),
+            Ok(Request::Show) => {
+                let _ = state.events.send(json!({ "event": "show" }));
+                json!({ "ok": true, "subscribers": state.events.receiver_count() })
+            }
+            Ok(Request::Status) => json!({ "ok": true, "subscribers": state.events.receiver_count() }),
             Ok(Request::Dictate { action: DictateAction::Start }) => {
                 json!({ "ok": state.vox.start().await })
             }

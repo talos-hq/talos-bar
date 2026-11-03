@@ -35,3 +35,91 @@ jobs:
           uv run --locked ruff check src tests
           uv run --locked ruff format --check src tests
           uv run --locked basedpyright
+
+  popover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # libdbus for talos-searchd (the e2e peer); Mesa lavapipe + Xvfb so the popover renders on a
+      # software Vulkan device; wayland/xkbcommon/X11 libs are loaded by the windowing backend.
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+          mesa-vulkan-drivers libvulkan1 xvfb libxkbcommon-x11-0 libx11-xcb1 libxcursor1 libxi6 libxrandr2 libxinerama1 libxxf86vm1 libwayland-client0
+      - uses: zackees/setup-soldr@v0
+      - name: talos-popover build
+        working-directory: popover
+        run: soldr cargo build --locked
+      - name: talos-popover tests
+        working-directory: popover
+        run: soldr cargo test --locked
+      - name: talos-popover clippy
+        working-directory: popover
+        run: soldr cargo clippy --locked --all-targets -- -D warnings
+      - name: talos-popover renders real results (screenshot against a live talos-searchd)
+        # Render on Mesa lavapipe (software Vulkan), never whatever GL/EGL the host routes to: wgpu's GL
+        # backend on NVIDIA's EGL fails with "Parent device is lost" (docs/gfx-backend.md in kernal-api,
+        # bar/README.md "Offscreen rendering").
+        env:
+          WGPU_BACKEND: vulkan
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          test -f "$VK_ICD_FILENAMES"
+          (cd searchd && soldr cargo build --locked)
+          dir="$RUNNER_TEMP/talos-ipc"; mkdir -m 700 "$dir"
+          searchd/target/debug/talos-searchd --no-hotkey --endpoint "$dir/sock" &
+          sleep 2
+          unset WAYLAND_DISPLAY
+          xvfb-run -a popover/target/debug/talos-popover --oneshot --query a --screenshot "$RUNNER_TEMP/popover.png" --endpoint "$dir/sock"
+          size=$(stat -c %s "$RUNNER_TEMP/popover.png"); echo "popover.png: $size bytes"
+          test "$size" -gt 5000
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: popover-screenshot
+          path: ${{ runner.temp }}/popover.png
+          if-no-files-found: ignore
+
+  bar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Same libraries as the popover lane: the bar's --screenshot renders offscreen on Mesa
+      # lavapipe under Xvfb. The dock itself needs a layer-shell compositor, which CI has not.
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+          mesa-vulkan-drivers libvulkan1 xvfb libxkbcommon-x11-0 libx11-xcb1 libxcursor1 libxi6 libxrandr2 libxinerama1 libxxf86vm1 libwayland-client0
+      - uses: zackees/setup-soldr@v0
+      - name: talos-bar-rs build
+        working-directory: bar
+        run: soldr cargo build --locked
+      - name: talos-bar-rs tests
+        working-directory: bar
+        run: soldr cargo test --locked
+      - name: talos-bar-rs clippy
+        working-directory: bar
+        run: soldr cargo clippy --locked --all-targets -- -D warnings
+      - name: talos-bar-rs renders the clock and searchd status (offscreen screenshot)
+        # Render on Mesa lavapipe (software Vulkan), never whatever GL/EGL the host routes to: wgpu's GL
+        # backend on NVIDIA's EGL fails with "Parent device is lost" (docs/gfx-backend.md in kernal-api,
+        # bar/README.md "Offscreen rendering").
+        env:
+          WGPU_BACKEND: vulkan
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          test -f "$VK_ICD_FILENAMES"
+          (cd searchd && soldr cargo build --locked)
+          dir="$RUNNER_TEMP/talos-ipc"; mkdir -m 700 "$dir"
+          searchd/target/debug/talos-searchd --no-hotkey --endpoint "$dir/sock" &
+          sleep 2
+          unset WAYLAND_DISPLAY
+          xvfb-run -a bar/target/debug/talos-bar-rs --screenshot "$RUNNER_TEMP/bar.png" --endpoint "$dir/sock"
+          size=$(stat -c %s "$RUNNER_TEMP/bar.png"); echo "bar.png: $size bytes"
+          test "$size" -gt 3000
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bar-screenshot
+          path: ${{ runner.temp }}/bar.png
+          if-no-files-found: ignore

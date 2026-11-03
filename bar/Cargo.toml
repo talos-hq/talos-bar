@@ -1,0 +1,21 @@
+[package]
+name = "talos-bar-rs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "talos-bar's top dock drawn with kernal-api gfx: world clock, search button, searchd status"
+
+[[bin]]
+name = "talos-bar-rs"
+path = "src/main.rs"
+
+[dependencies]
+kernal-api = { git = "https://github.com/forge-ci/kernal-api", rev = "08eca99ae20bf7eb6ead1381cefb2a91760b3884", features = ["gfx-egui", "ipc", "system-tray"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+chrono-tz = "=0.10.4"
+iana-time-zone = "=0.1.65"
+png = "=0.17.16"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = { version = "=0.9.12", default-features = false, features = ["parse", "serde"] }
+
