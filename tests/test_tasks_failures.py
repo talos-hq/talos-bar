@@ -13,7 +13,9 @@ from talos_bar import glue
 
 @pytest.mark.parametrize("exit_style", ["return 7", "raise SystemExit(7)"])
 def test_script_failure_is_not_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_style: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_style: str,
 ) -> None:
     (tmp_path / "failed_save.py").write_text(f"def main(argv):\n    {exit_style}\n")
     monkeypatch.setattr(glue, "SCRIPTS", tmp_path)
@@ -56,15 +58,34 @@ def test_save_checks_disk_and_retains_exact_text(tmp_path: Path, monkeypatch: py
     # their own predecessor, but cannot overwrite a subsequent external edit.
     save(ctx, json.dumps({"text": "newer", "base": "external\n"}))
     assert file.read_text() == "newer"
+    # Hot reload replaces the dynamically loaded glue module, but pending
+    # actions still carry bases from the same live editor/context.
+    reloaded = glue.load_file(Path(__file__).parents[1] / "src/talos_bar/glue/builtin/tasks.py")
+    save = next(i for i in reloaded if i.id == "tasks").actions["save"]
+    # The GUI acknowledges the first save before the second completes, so
+    # its third edit carries that acknowledged intermediate base.
+    save(ctx, json.dumps({"text": "third", "base": "draft\n\n"}))
+    assert file.read_text() == "third"
     file.write_text("another editor")
     with pytest.raises(RuntimeError, match="changed"):
         save(ctx, json.dumps({"text": "latest", "base": "external\n"}))
     assert file.read_text() == "another editor"
+    hook = repo / ".git/hooks/pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    with pytest.raises(RuntimeError, match="commit"):
+        save(ctx, json.dumps({"text": "attempted", "base": "another editor"}))
+    assert file.read_text() == "attempted"
+    hook.write_text("#!/bin/sh\nexit 0\n")
+    save(ctx, json.dumps({"text": "newer after failure", "base": "another editor"}))
+    assert file.read_text() == "newer after failure"
 
 
 @pytest.mark.parametrize("failure", ["stage", "commit"])
 def test_git_failure_reaches_caller_and_retry_commits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
@@ -87,19 +108,24 @@ def test_git_failure_reaches_caller_and_retry_commits(
     glue.run_script("tasks_cli", "save64", encoded)
     status = subprocess.run(
         ["git", "-C", str(tmp_path), "status", "--porcelain"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert status.stdout == ""
     committed = subprocess.run(
         ["git", "-C", str(tmp_path), "show", "HEAD:TASKS.md"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert committed.stdout == "draft\n\n"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable fixture")
 def test_legacy_external_command_round_trip_and_conflict(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     file = tmp_path / "TASKS.md"
     file.write_text("original\n\n")
@@ -132,7 +158,8 @@ def test_legacy_external_command_round_trip_and_conflict(
 
 
 def test_editor_commit_leaves_unrelated_staged_work(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     for key, value in (("user.name", "Test"), ("user.email", "test@example.com")):
@@ -144,6 +171,8 @@ def test_editor_commit_leaves_unrelated_staged_work(
     glue.run_script("tasks_cli", "save64", base64.b64encode(b"tasks").decode())
     status = subprocess.run(
         ["git", "-C", str(tmp_path), "status", "--porcelain"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert status.stdout == "A  unrelated.txt\n"

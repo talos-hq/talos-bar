@@ -10,6 +10,7 @@ runs an external command instead.
 import base64
 import json
 import os
+from hashlib import sha256
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -18,6 +19,11 @@ from talos_bar.glue import Context, Output, action, every, item, popup, run, run
 CMD = os.environ.get("TALOS_BAR_TASKS_CMD", "")
 REPO = Path(os.environ.get("TASKS_REPO", Path.home() / "dev" / "tasks"))
 ENABLED = bool(CMD) or (REPO / ".git").exists()
+
+
+class _SaveLineage(TypedDict):
+    ancestors: set[bytes]
+    text: str
 
 
 class TaskLine(TypedDict, total=False):
@@ -82,22 +88,30 @@ if ENABLED:
     def save(ctx: Context, payload: str) -> None:
         edit = cast("dict[str, str]", json.loads(payload))
         text, base = edit["text"], edit["base"]
-        # Autosaves queued before their predecessor was acknowledged share a
-        # base. Compare against our last successful write, never stale disk.
-        chain = ctx.cache.get("tasks_save_chain")
+        # Each queued edit may use a different acknowledged ancestor. Keep
+        # their hashes and only one document body, rather than full snapshots.
+        cached_chain = ctx.cache.get("tasks_save_chain")
+        # Glue modules are reimported on hot reload; cache plain structural
+        # data so the lineage does not depend on a previous module's class.
+        chain: _SaveLineage | None = (
+            cast("_SaveLineage", cached_chain) if isinstance(cached_chain, dict) else None
+        )
         current = _tasks("read")
-        expected = base
-        if isinstance(chain, tuple):
-            old_base, saved = cast("tuple[str, str]", chain)
-            if old_base == base and current != base:
-                expected = saved
-        encoded = base64.b64encode(text.encode()).decode()
-        if current != expected and current != text:
+        base_hash = sha256(base.encode()).digest()
+        follows_own_write = (
+            chain is not None and base_hash in chain["ancestors"] and current == chain["text"]
+        )
+        if current not in (base, text) and not follows_own_write:
             raise RuntimeError("TASKS.md changed outside this editor; draft kept")
-        # A failed commit may still have written this text. Retain its base
-        # so a later edit can retry without treating our own write as external.
-        ctx.cache["tasks_save_chain"] = (base, text)
+        if chain is None or current != chain["text"]:
+            chain = {"ancestors": set(), "text": ""}
+        chain["ancestors"].update((base_hash, sha256(text.encode()).digest()))
+        # A failed commit may still have written this text. Retain its lineage
+        # so a later edit can retry without mistaking our own write for another editor.
+        chain["text"] = text
+        ctx.cache["tasks_save_chain"] = chain
+        encoded = base64.b64encode(text.encode()).decode()
         if CMD:
             _tasks("save64", encoded)
         else:
-            _tasks("save64", encoded, base64.b64encode(expected.encode()).decode())
+            _tasks("save64", encoded, base64.b64encode(current.encode()).decode())
