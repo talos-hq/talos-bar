@@ -16,10 +16,13 @@ Item {
     // a refresh of `content` must not overwrite them.
     property bool dirty: false
     property bool loaded: false
+    property bool saving: false
+    property string submitted: ""
 
     function save() {
-        if (!dirty) return;
-        dirty = false;
+        if (!dirty || (saving && submitted === editor.text)) return;
+        saving = true;
+        submitted = editor.text;
         bar.action("tasks", "save", editor.text);
     }
     onContentChanged: {
@@ -31,6 +34,11 @@ Item {
     Connections {
         target: bar
         function onPopupChanged() { if (bar.openId !== "tasks") root.save(); }
+        function onActionFinished(itemId, name, payload, success) {
+            if (itemId !== "tasks" || name !== "save") return;
+            if (payload === root.submitted) root.saving = false;
+            if (success && editor.text === payload) root.dirty = false;
+        }
     }
     Timer { id: saveTimer; interval: 1500; onTriggered: root.save() }
     // Type straight away only when the user clicked the tab open.
@@ -75,6 +83,7 @@ Item {
                 onTextChanged: {
                     if (!root.loaded || text === root.content.text) return;
                     root.dirty = true;
+                    bar.setDraft("tasks", text);
                     saveTimer.restart();
                 }
             }

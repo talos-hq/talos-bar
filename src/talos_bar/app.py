@@ -135,6 +135,7 @@ class Bar(QObject):
     itemsChanged = Signal()
     popupChanged = Signal()
     result = Signal(str, str, object, bool)
+    actionFinished = Signal(str, str, str, bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -144,6 +145,9 @@ class Bar(QObject):
         self._item_views: dict[str, ItemView] = {}
         self._timers: dict[str, QTimer] = {}
         self._pool = QThreadPool.globalInstance()
+        self._actions: dict[str, list[tuple[glue.Item, str, str]]] = {}
+        self._popup_versions: dict[str, int] = {}
+        self._drafts: dict[str, str] = {}
         self._open = ""  # id of the item whose popup is showing
         # Only a popup the user clicked open may take the keyboard, as in
         # Plasma; one opened by hover (or by code) must never steal focus.
@@ -232,12 +236,18 @@ class Bar(QObject):
             self._pool.start(_Job(self, it.id, "item", it.refresh))
         # An open popup follows its item's refresh interval.
         if it.popup and self._open == it.id:
-            self._pool.start(_Job(self, it.id, "popup", it.popup))
+            self._request_popup(it)
 
     @Slot(str, str, object, bool)
     def _on_result(self, item_id: str, kind: str, out: object, error: bool) -> None:
         if item_id not in self._view:
             return
+        if kind.startswith("popup:"):
+            if kind != f"popup:{self._popup_versions.get(item_id, 0)}":
+                return
+            kind = "popup"
+        if kind == "action":
+            self._finish_action(item_id, error)
         if kind == "popup":
             if item_id == self._open:
                 content = cast("Mapping[str, object]", out) if isinstance(out, dict) else None
@@ -264,6 +274,8 @@ class Bar(QObject):
         url = QUrl.fromLocalFile(str(path))
         url.setQuery(f"v={self._generation}")
         self._popup = {**content, "component": url.toString(), "error": error}
+        if item_id in self._drafts:
+            self._popup["text"] = self._drafts[item_id]
         self.popupChanged.emit()
 
     @Slot(str)
@@ -307,7 +319,7 @@ class Bar(QObject):
         self._focus = focus
         self._popup = {}
         self.popupChanged.emit()
-        self._pool.start(_Job(self, item_id, "popup", it.popup))
+        self._request_popup(it)
 
     @Slot()
     def close(self) -> None:
@@ -337,13 +349,47 @@ class Bar(QObject):
             print(f"talos-bar: no action {name!r} on {item_id!r}", file=sys.stderr)
             return
 
+        self._popup_versions[item_id] = self._popup_versions.get(item_id, 0) + 1
+        queue = self._actions.setdefault(item_id, [])
+        queue.append((it, name, payload))
+        if len(queue) == 1:
+            self._start_action(item_id)
+
+    @Slot(str, str)
+    def setDraft(self, item_id: str, text: str) -> None:
+        """Keep unsaved editor text alive when its popup is destroyed."""
+        self._drafts[item_id] = text
+
+    def _request_popup(self, it: glue.Item) -> None:
+        if it.popup is None:
+            return
+        version = self._popup_versions.get(it.id, 0) + 1
+        self._popup_versions[it.id] = version
+        self._pool.start(_Job(self, it.id, f"popup:{version}", it.popup))
+
+    def _start_action(self, item_id: str) -> None:
+        it, name, payload = self._actions[item_id][0]
+        handler = it.actions[name]
+
         def run(ctx: glue.Context) -> glue.Output:
             handler(ctx, payload)
             return it.refresh(ctx) if it.refresh else None
 
-        self._pool.start(_Job(self, item_id, "item", run))
-        if it.popup and self._open == item_id:
-            self._pool.start(_Job(self, item_id, "popup", it.popup))
+        self._pool.start(_Job(self, item_id, "action", run))
+
+    def _finish_action(self, item_id: str, error: bool) -> None:
+        queue = self._actions[item_id]
+        it, name, payload = queue.pop(0)
+        if not error and name == "save" and self._drafts.get(item_id) == payload:
+            del self._drafts[item_id]
+        self.actionFinished.emit(item_id, name, payload, not error)
+        if queue:
+            self._start_action(item_id)
+        else:
+            del self._actions[item_id]
+            if self._open == item_id:
+                self._request_popup(it)
+
 
 
 def _print_warnings(warnings: list[QQmlError]) -> None:
