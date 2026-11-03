@@ -131,7 +131,14 @@ def on_click(id: str) -> Callable[[ClickFn], ClickFn]:
 
 
 def run(cmd: list[str], timeout: float = 10.0) -> str:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False).stdout
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{Path(cmd[0]).name} timed out") from None
+    if result.returncode:
+        # Command arguments may contain the entire note, so never log argv.
+        raise RuntimeError(f"{Path(cmd[0]).name} exited with status {result.returncode}")
+    return result.stdout
 
 
 SCRIPTS = Path(__file__).parent.parent / "scripts"
@@ -156,8 +163,13 @@ def run_script(name: str, *args: str) -> str:
         module = importlib.import_module(name)
         main = cast("Callable[..., object]", getattr(module, "main"))  # noqa: B009
         takes_argv = bool(inspect.signature(main).parameters)
-        with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
-            main([name, *args]) if takes_argv else main()
+        with contextlib.redirect_stdout(out):
+            try:
+                status = main([name, *args]) if takes_argv else main()
+            except SystemExit as exc:
+                status = exc.code
+            if status not in (None, 0):
+                raise RuntimeError(f"{name} failed with status {status}")
     return out.getvalue()
 
 

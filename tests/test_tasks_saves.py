@@ -1,5 +1,6 @@
 """Save ordering and the real editor's draft lifetime."""
 
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -41,7 +42,8 @@ def editor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Ba
     item = glue.Item(id="tasks", label="Tasks", source=source)
     item.popup = lambda ctx: {"component": "Tasks.qml", "text": disk.read_text(), "synced": True}
     def save(_ctx: glue.Context, payload: str) -> None:
-        disk.write_text(payload)
+        edit = cast("dict[str, str]", json.loads(payload)) if payload.startswith("{") else {"text": payload}
+        disk.write_text(edit["text"])
 
     item.actions["save"] = save
     bar._items["tasks"] = item  # pyright: ignore[reportPrivateUsage]
@@ -125,3 +127,123 @@ def test_newer_draft_survives_ack_and_reopening(editor: tuple[Bar, ControlledPoo
     while pool.jobs:
         pool.finish()
     assert cast("dict[str, object]", bar.property("popup"))["text"] == "second"
+
+
+def test_failed_draft_reopens_dirty_and_can_retry(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    from PySide6.QtCore import QMetaObject
+
+    bar, pool, text = editor
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    item = bar._items["tasks"]  # pyright: ignore[reportPrivateUsage]
+    save = item.actions["save"]
+
+    def fail(_ctx: glue.Context, _payload: str) -> None:
+        raise RuntimeError("save unavailable")
+
+    item.actions["save"] = fail
+    text.setProperty("text", "keep this draft")
+    assert QMetaObject.invokeMethod(body, "save")
+    pool.finish()
+    assert body.property("dirty")
+    assert body.property("saveError")
+    bar.close()
+    bar.open("tasks", focus=True)
+    while pool.jobs:
+        pool.finish()
+    content = cast("dict[str, object]", bar.property("popup"))
+    assert content["text"] == "keep this draft"
+    assert content["editorDirty"] and content["saveError"]
+    item.actions["save"] = save
+    # The popup loader is recreated by close/reopen; retrieve its new editor.
+    app = QGuiApplication.instance()
+    assert app is not None
+    app.processEvents()
+    # Explicit retry against the real bar action is also what Retry save invokes.
+    payload = json.dumps({"text": content["text"], "base": content["baseText"]})
+    bar.action("tasks", "save", payload)
+    while pool.jobs:
+        pool.finish()
+    assert cast("dict[str, object]", bar.property("popup"))["text"] == "keep this draft"
+    assert not cast("dict[str, object]", bar.property("popup")).get("editorDirty", False)
+
+
+def test_retyping_an_older_submission_keeps_new_revision_dirty(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    from PySide6.QtCore import QMetaObject
+
+    bar, pool, text = editor
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    text.setProperty("text", "first")
+    assert QMetaObject.invokeMethod(body, "save")
+    text.setProperty("text", "second")
+    assert QMetaObject.invokeMethod(body, "save")
+    text.setProperty("text", "first")
+    pool.finish()
+    assert body.property("dirty"), "An older acknowledgement cannot acknowledge a newer revision"
+    bar.close()
+    bar.open("tasks", focus=True)
+    while pool.jobs:
+        pool.finish()
+    assert cast("dict[str, object]", bar.property("popup"))["text"] == "first"
+
+
+def test_discard_failed_draft_explicitly_reloads_saved_version(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    from PySide6.QtCore import QMetaObject
+
+    bar, pool, text = editor
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+
+    def conflict(_ctx: glue.Context, _payload: str) -> None:
+        raise RuntimeError("file changed")
+
+    bar._items["tasks"].actions["save"] = conflict  # pyright: ignore[reportPrivateUsage]
+    text.setProperty("text", "unsaved draft")
+    assert QMetaObject.invokeMethod(body, "save")
+    pool.finish()
+    while pool.jobs:
+        pool.finish()
+    assert text.property("text") == "unsaved draft"
+    assert body.property("saveError")
+    body.setProperty("dirty", False)  # The explicit discard button does this.
+    bar.discardDraft("tasks")
+    while pool.jobs:
+        pool.finish()
+    assert text.property("text") == "original"
+    assert not body.property("dirty")
+    assert not body.property("saveError")
+
+
+def test_returning_to_original_text_is_a_new_edit(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    from PySide6.QtCore import QMetaObject
+
+    bar, pool, text = editor
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    text.setProperty("text", "first")
+    assert QMetaObject.invokeMethod(body, "save")
+    text.setProperty("text", "original")
+    pool.finish()
+    assert body.property("dirty")
+    bar.close()
+    bar.open("tasks", focus=True)
+    while pool.jobs:
+        pool.finish()
+    assert cast("dict[str, object]", bar.property("popup"))["text"] == "original"

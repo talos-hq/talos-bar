@@ -1,5 +1,5 @@
 """TASKS.md checklist, from scripts/tasks_cli.py (carried over from
-~/dev/nixos system/tasks unchanged).
+~/dev/nixos system/tasks).
 
 `list` gives {open, synced, top}; `read` the whole file; `save64 <b64>`
 commits an edit locally (a timer pushes it). Enabled when the tasks clone
@@ -40,7 +40,11 @@ class Editor(TypedDict):
 
 
 def _tasks(*args: str) -> str:
-    return run([CMD, *args], timeout=25) if CMD else run_script("tasks_cli", *args)
+    if not CMD:
+        return run_script("tasks_cli", *args)
+    result = run([CMD, *args], timeout=25)
+    # The external tasks command's read protocol uses print(file_text).
+    return result.removesuffix("\n") if args == ("read",) else result
 
 
 def _list(ctx: Context) -> TaskList:
@@ -71,9 +75,29 @@ if ENABLED:
     def editor(ctx: Context) -> Editor:
         cached = ctx.cache.get("tasks")
         data = cast("TaskList", cached) if isinstance(cached, dict) else _list(ctx)
-        text = _tasks("read").removesuffix("\n")
+        text = _tasks("read")
         return {"component": "Tasks.qml", "text": text, "synced": data.get("synced", True)}
 
     @action("tasks", "save")
     def save(ctx: Context, payload: str) -> None:
-        _tasks("save64", base64.b64encode(payload.encode()).decode())
+        edit = cast("dict[str, str]", json.loads(payload))
+        text, base = edit["text"], edit["base"]
+        # Autosaves queued before their predecessor was acknowledged share a
+        # base. Compare against our last successful write, never stale disk.
+        chain = ctx.cache.get("tasks_save_chain")
+        current = _tasks("read")
+        expected = base
+        if isinstance(chain, tuple):
+            old_base, saved = cast("tuple[str, str]", chain)
+            if old_base == base and current != base:
+                expected = saved
+        encoded = base64.b64encode(text.encode()).decode()
+        if current != expected and current != text:
+            raise RuntimeError("TASKS.md changed outside this editor; draft kept")
+        # A failed commit may still have written this text. Retain its base
+        # so a later edit can retry without treating our own write as external.
+        ctx.cache["tasks_save_chain"] = (base, text)
+        if CMD:
+            _tasks("save64", encoded)
+        else:
+            _tasks("save64", encoded, base64.b64encode(expected.encode()).decode())

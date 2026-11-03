@@ -42,9 +42,9 @@ class _Job(QRunnable):
         try:
             out = self.fn(self.bar.ctx)
             self.bar.result.emit(self.item_id, self.kind, out if out is not None else "", False)
-        except Exception:
+        except Exception as exc:
             traceback.print_exc()
-            self.bar.result.emit(self.item_id, self.kind, "", True)
+            self.bar.result.emit(self.item_id, self.kind, str(exc), True)
 
 
 def _blank_view(it: glue.Item) -> dict[str, object]:
@@ -135,7 +135,7 @@ class Bar(QObject):
     itemsChanged = Signal()
     popupChanged = Signal()
     result = Signal(str, str, object, bool)
-    actionFinished = Signal(str, str, str, bool)
+    actionFinished = Signal(str, str, str, bool, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -148,6 +148,10 @@ class Bar(QObject):
         self._actions: dict[str, list[tuple[glue.Item, str, str]]] = {}
         self._popup_versions: dict[str, int] = {}
         self._drafts: dict[str, str] = {}
+        self._draft_bases: dict[str, str] = {}
+        self._draft_errors: dict[str, str] = {}
+        self._submitted: dict[tuple[str, str], tuple[str, int]] = {}
+        self._draft_revisions: dict[str, int] = {}
         self._open = ""  # id of the item whose popup is showing
         # Only a popup the user clicked open may take the keyboard, as in
         # Plasma; one opened by hover (or by code) must never steal focus.
@@ -247,7 +251,7 @@ class Bar(QObject):
                 return
             kind = "popup"
         if kind == "action":
-            self._finish_action(item_id, error)
+            self._finish_action(item_id, error, str(out) if error else "")
         if kind == "popup":
             if item_id == self._open:
                 content = cast("Mapping[str, object]", out) if isinstance(out, dict) else None
@@ -275,7 +279,13 @@ class Bar(QObject):
         url.setQuery(f"v={self._generation}")
         self._popup = {**content, "component": url.toString(), "error": error}
         if item_id in self._drafts:
-            self._popup["text"] = self._drafts[item_id]
+            self._popup.update(
+                text=self._drafts[item_id], baseText=self._draft_bases[item_id],
+                editorDirty=True, editorRevision=self._draft_revisions[item_id],
+                saving=bool(self._actions.get(item_id)),
+                saveError=item_id in self._draft_errors,
+                saveErrorMessage=self._draft_errors.get(item_id, ""),
+            )
         self.popupChanged.emit()
 
     @Slot(str)
@@ -352,13 +362,33 @@ class Bar(QObject):
         self._popup_versions[item_id] = self._popup_versions.get(item_id, 0) + 1
         queue = self._actions.setdefault(item_id, [])
         queue.append((it, name, payload))
+        if name == "save" and item_id in self._drafts:
+            self._submitted[(item_id, payload)] = (
+                self._drafts[item_id], self._draft_revisions[item_id],
+            )
         if len(queue) == 1:
             self._start_action(item_id)
 
-    @Slot(str, str)
-    def setDraft(self, item_id: str, text: str) -> None:
+    @Slot(str, str, str, result=int)
+    def setDraft(self, item_id: str, text: str, base: str) -> int:
         """Keep unsaved editor text alive when its popup is destroyed."""
         self._drafts[item_id] = text
+        self._draft_bases[item_id] = base
+        revision = self._draft_revisions.get(item_id, 0) + 1
+        self._draft_revisions[item_id] = revision
+        return revision
+
+    @Slot(str)
+    def discardDraft(self, item_id: str) -> None:
+        """Explicitly discard a failed draft and reload the saved file."""
+        if self._actions.get(item_id):
+            return
+        self._drafts.pop(item_id, None)
+        self._draft_bases.pop(item_id, None)
+        self._draft_errors.pop(item_id, None)
+        it = self._items.get(item_id)
+        if it is not None and self._open == item_id:
+            self._request_popup(it)
 
     def _request_popup(self, it: glue.Item) -> None:
         if it.popup is None:
@@ -377,12 +407,22 @@ class Bar(QObject):
 
         self._pool.start(_Job(self, item_id, "action", run))
 
-    def _finish_action(self, item_id: str, error: bool) -> None:
+    def _finish_action(self, item_id: str, error: bool, message: str) -> None:
         queue = self._actions[item_id]
         it, name, payload = queue.pop(0)
-        if not error and name == "save" and self._drafts.get(item_id) == payload:
-            del self._drafts[item_id]
-        self.actionFinished.emit(item_id, name, payload, not error)
+        saved_text, revision = self._submitted.pop((item_id, payload), (payload, -1))
+        if name == "save":
+            if error:
+                self._draft_errors[item_id] = message
+            else:
+                self._draft_errors.pop(item_id, None)
+                if (self._draft_revisions.get(item_id) == revision
+                        and self._drafts.get(item_id) == saved_text and not queue):
+                    del self._drafts[item_id]
+                    self._draft_bases.pop(item_id, None)
+                elif item_id in self._drafts:
+                    self._draft_bases[item_id] = saved_text
+        self.actionFinished.emit(item_id, name, payload, not error, message)
         if queue:
             self._start_action(item_id)
         else:

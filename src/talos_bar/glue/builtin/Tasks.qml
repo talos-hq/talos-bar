@@ -16,28 +16,48 @@ Item {
     // a refresh of `content` must not overwrite them.
     property bool dirty: false
     property bool loaded: false
+    property bool applyingContent: false
     property bool saving: false
-    property string submitted: ""
+    property int submittedRevision: -1
+    property string baseText: ""
+    property bool saveError: false
+    property string saveErrorMessage: ""
+    property int revision: 0
 
     function save() {
-        if (!dirty || (saving && submitted === editor.text)) return;
+        if (!dirty || (saving && submittedRevision === revision)) return;
         saving = true;
-        submitted = editor.text;
-        bar.action("tasks", "save", editor.text);
+        submittedRevision = revision;
+        bar.action("tasks", "save", JSON.stringify({text: editor.text, base: baseText, revision: root.revision}));
     }
     onContentChanged: {
         if (content.text === undefined || dirty) return;
+        applyingContent = true;
         if (editor.text !== content.text) editor.text = content.text;
+        applyingContent = false;
+        baseText = content.baseText !== undefined ? content.baseText : content.text;
+        dirty = !!content.editorDirty;
+        revision = content.editorRevision || 0;
+        saving = !!content.saving;
+        saveError = !!content.saveError;
+        saveErrorMessage = content.saveErrorMessage || "";
         loaded = true;
     }
     Component.onDestruction: save()
     Connections {
         target: bar
         function onPopupChanged() { if (bar.openId !== "tasks") root.save(); }
-        function onActionFinished(itemId, name, payload, success) {
+        function onActionFinished(itemId, name, payload, success, message) {
             if (itemId !== "tasks" || name !== "save") return;
-            if (payload === root.submitted) root.saving = false;
-            if (success && editor.text === payload) root.dirty = false;
+            const edit = JSON.parse(payload);
+            const saved = edit.text;
+            if (edit.revision === root.submittedRevision || root.submittedRevision === -1) root.saving = false;
+            root.saveError = !success;
+            root.saveErrorMessage = message;
+            if (success) {
+                root.baseText = saved;
+                if (editor.text === saved && edit.revision === root.revision) root.dirty = false;
+            }
         }
     }
     Timer { id: saveTimer; interval: 1500; onTriggered: root.save() }
@@ -54,10 +74,29 @@ Item {
             Label { text: "TASKS.md"; color: Theme.text; font.bold: true; font.pixelSize: 16 }
             Label {
                 Layout.fillWidth: true
-                text: !root.loaded ? "loading…" : root.dirty ? "editing…"
+                text: !root.loaded ? "loading…" : root.saveError ? "Save failed or file changed; draft kept"
+                    : root.saving ? "saving…" : root.dirty ? "editing…"
                     : root.content.synced ? "synced" : "saved, syncs at 0/6/12/18h"
                 color: Theme.text
                 opacity: 0.6
+                HoverHandler { id: saveStatusHover }
+                ToolTip.visible: saveStatusHover.hovered && root.saveError
+                ToolTip.text: root.saveErrorMessage
+            }
+            Button {
+                text: "Retry save"
+                visible: root.saveError
+                enabled: !root.saving
+                onClicked: root.save()
+            }
+            Button {
+                text: "Discard draft and reload"
+                visible: root.saveError
+                enabled: !root.saving
+                onClicked: {
+                    root.dirty = false;
+                    bar.discardDraft("tasks");
+                }
             }
             ToolButton {
                 icon.source: "image://icon/internet-services"
@@ -79,11 +118,12 @@ Item {
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.PlainText
                 selectByMouse: true
+                readOnly: !root.loaded
                 background: null
                 onTextChanged: {
-                    if (!root.loaded || text === root.content.text) return;
+                    if (!root.loaded || root.applyingContent) return;
                     root.dirty = true;
-                    bar.setDraft("tasks", text);
+                    root.revision = bar.setDraft("tasks", text, root.baseText);
                     saveTimer.restart();
                 }
             }
