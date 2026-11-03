@@ -145,12 +145,11 @@ class Bar(QObject):
         self._item_views: dict[str, ItemView] = {}
         self._timers: dict[str, QTimer] = {}
         self._pool = QThreadPool.globalInstance()
-        self._actions: dict[str, list[tuple[glue.Item, str, str]]] = {}
+        self._actions: dict[str, list[tuple[glue.Item, str, str, str, int]]] = {}
         self._popup_versions: dict[str, int] = {}
         self._drafts: dict[str, str] = {}
         self._draft_bases: dict[str, str] = {}
         self._draft_errors: dict[str, str] = {}
-        self._submitted: dict[tuple[str, str], tuple[str, int]] = {}
         self._draft_revisions: dict[str, int] = {}
         self._open = ""  # id of the item whose popup is showing
         # Only a popup the user clicked open may take the keyboard, as in
@@ -363,12 +362,10 @@ class Bar(QObject):
 
         self._popup_versions[item_id] = self._popup_versions.get(item_id, 0) + 1
         queue = self._actions.setdefault(item_id, [])
-        queue.append((it, name, payload))
+        saved_text, revision = payload, -1
         if name == "save" and item_id in self._drafts:
-            self._submitted[(item_id, payload)] = (
-                self._drafts[item_id],
-                self._draft_revisions[item_id],
-            )
+            saved_text, revision = self._drafts[item_id], self._draft_revisions[item_id]
+        queue.append((it, name, payload, saved_text, revision))
         if len(queue) == 1:
             self._start_action(item_id)
 
@@ -405,7 +402,7 @@ class Bar(QObject):
         self._pool.start(_Job(self, it.id, f"popup:{version}", it.popup))
 
     def _start_action(self, item_id: str) -> None:
-        it, name, payload = self._actions[item_id][0]
+        it, name, payload, _, _ = self._actions[item_id][0]
         handler = it.actions[name]
 
         def run(ctx: glue.Context) -> glue.Output:
@@ -416,8 +413,7 @@ class Bar(QObject):
 
     def _finish_action(self, item_id: str, error: bool, message: str) -> None:
         queue = self._actions[item_id]
-        it, name, payload = queue.pop(0)
-        saved_text, revision = self._submitted.pop((item_id, payload), (payload, -1))
+        it, name, payload, saved_text, revision = queue.pop(0)
         if name == "save":
             if error:
                 self._draft_errors[item_id] = message

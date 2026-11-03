@@ -290,3 +290,74 @@ def test_reopened_editor_stays_saving_until_all_queued_saves_finish(
     assert body.property("saving"), "The first acknowledgement must not enable recovery during the next save"
     pool.finish()
     assert not body.property("saving")
+
+
+def test_identical_queued_saves_each_acknowledge_their_own_revision(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    bar, pool, _ = editor
+    revision = bar.setDraft("tasks", "duplicate", "original")
+    payload = json.dumps({"text": "duplicate", "base": "original", "revision": revision})
+    bar.action("tasks", "save", payload)
+    bar.action("tasks", "save", payload)
+    pool.finish()
+    pool.finish()
+    while pool.jobs:
+        pool.finish()
+    popup = cast("dict[str, object]", bar.property("popup"))
+    assert popup["text"] == "duplicate"
+    assert not popup.get("editorDirty"), "Both successful identical saves must clear the acknowledged draft"
+    revision = bar.setDraft("tasks", "followup", "duplicate")
+    bar.action("tasks", "save", json.dumps({"text": "followup", "base": "duplicate", "revision": revision}))
+    while pool.jobs:
+        pool.finish()
+    popup = cast("dict[str, object]", bar.property("popup"))
+    assert popup["text"] == "followup"
+    assert not popup.get("editorDirty")
+
+
+def test_duplicate_ack_keeps_draft_retryable_when_later_save_fails(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    from PySide6.QtCore import QMetaObject
+
+    bar, pool, text = editor
+    item = bar._items["tasks"]  # pyright: ignore[reportPrivateUsage]
+    original = item.actions["save"]
+    count = 0
+
+    def fail_second(ctx: glue.Context, payload: str) -> None:
+        nonlocal count
+        count += 1
+        if count == 2:
+            raise RuntimeError("second save failed")
+        original(ctx, payload)
+
+    item.actions["save"] = fail_second
+    text.setProperty("text", "duplicate")
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    revision = cast("int", body.property("revision"))
+    payload = json.dumps({"text": "duplicate", "base": "original", "revision": revision})
+    bar.action("tasks", "save", payload)
+    bar.action("tasks", "save", payload)
+    pool.finish()
+    assert body.property("dirty"), "A successful duplicate must keep the draft until all saves finish"
+    pool.finish()
+    while pool.jobs:
+        pool.finish()
+    root = cast("QObject", bar.property("testRoot"))
+    text = root.findChildren(QObject, "tasksEditor")[-1]
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    assert body.property("dirty") and body.property("saveError")
+    assert QMetaObject.invokeMethod(body, "save")
+    while pool.jobs:
+        pool.finish()
+    popup = cast("dict[str, object]", bar.property("popup"))
+    assert popup["text"] == "duplicate"
+    assert not popup.get("editorDirty") and not popup.get("saveError")

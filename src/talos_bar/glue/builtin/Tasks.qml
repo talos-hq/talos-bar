@@ -56,7 +56,7 @@ Item {
             root.saveErrorMessage = message;
             if (success) {
                 root.baseText = saved;
-                if (editor.text === saved && edit.revision === root.revision) root.dirty = false;
+                if (!root.saving && editor.text === saved && edit.revision === root.revision) root.dirty = false;
             }
         }
     }
