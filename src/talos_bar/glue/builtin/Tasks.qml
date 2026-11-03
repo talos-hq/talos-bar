@@ -51,7 +51,7 @@ Item {
             if (itemId !== "tasks" || name !== "save") return;
             const edit = JSON.parse(payload);
             const saved = edit.text;
-            if (edit.revision === root.submittedRevision || root.submittedRevision === -1) root.saving = false;
+            root.saving = bar.hasPendingActions("tasks");
             root.saveError = !success;
             root.saveErrorMessage = message;
             if (success) {
@@ -112,12 +112,19 @@ Item {
             background: Rectangle { radius: 5; color: Qt.rgba(0, 0, 0, 0.25); border.width: 1; border.color: Qt.alpha(Theme.text, 0.1) }
             TextArea {
                 id: editor
+                objectName: "tasksEditor"
                 color: Theme.text
                 selectionColor: Qt.alpha(Theme.highlight, 0.5)
                 font.family: "monospace"
                 wrapMode: TextEdit.Wrap
                 textFormat: TextEdit.PlainText
                 selectByMouse: true
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onPressedChanged: {
+                        if (pressed && bar.openId === "tasks" && !bar.popupFocus) bar.click("tasks");
+                    }
+                }
                 readOnly: !root.loaded
                 background: null
                 onTextChanged: {

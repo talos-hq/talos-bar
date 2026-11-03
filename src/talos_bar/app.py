@@ -280,8 +280,10 @@ class Bar(QObject):
         self._popup = {**content, "component": url.toString(), "error": error}
         if item_id in self._drafts:
             self._popup.update(
-                text=self._drafts[item_id], baseText=self._draft_bases[item_id],
-                editorDirty=True, editorRevision=self._draft_revisions[item_id],
+                text=self._drafts[item_id],
+                baseText=self._draft_bases[item_id],
+                editorDirty=True,
+                editorRevision=self._draft_revisions[item_id],
                 saving=bool(self._actions.get(item_id)),
                 saveError=item_id in self._draft_errors,
                 saveErrorMessage=self._draft_errors.get(item_id, ""),
@@ -364,7 +366,8 @@ class Bar(QObject):
         queue.append((it, name, payload))
         if name == "save" and item_id in self._drafts:
             self._submitted[(item_id, payload)] = (
-                self._drafts[item_id], self._draft_revisions[item_id],
+                self._drafts[item_id],
+                self._draft_revisions[item_id],
             )
         if len(queue) == 1:
             self._start_action(item_id)
@@ -377,6 +380,10 @@ class Bar(QObject):
         revision = self._draft_revisions.get(item_id, 0) + 1
         self._draft_revisions[item_id] = revision
         return revision
+
+    @Slot(str, result=bool)
+    def hasPendingActions(self, item_id: str) -> bool:
+        return bool(self._actions.get(item_id))
 
     @Slot(str)
     def discardDraft(self, item_id: str) -> None:
@@ -416,8 +423,11 @@ class Bar(QObject):
                 self._draft_errors[item_id] = message
             else:
                 self._draft_errors.pop(item_id, None)
-                if (self._draft_revisions.get(item_id) == revision
-                        and self._drafts.get(item_id) == saved_text and not queue):
+                if (
+                    self._draft_revisions.get(item_id) == revision
+                    and self._drafts.get(item_id) == saved_text
+                    and not queue
+                ):
                     del self._drafts[item_id]
                     self._draft_bases.pop(item_id, None)
                 elif item_id in self._drafts:
@@ -429,7 +439,6 @@ class Bar(QObject):
             del self._actions[item_id]
             if self._open == item_id:
                 self._request_popup(it)
-
 
 
 def _print_warnings(warnings: list[QQmlError]) -> None:

@@ -41,6 +41,7 @@ def editor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Ba
     source = Path(__file__).parents[1] / "src/talos_bar/glue/builtin/tasks.py"
     item = glue.Item(id="tasks", label="Tasks", source=source)
     item.popup = lambda ctx: {"component": "Tasks.qml", "text": disk.read_text(), "synced": True}
+
     def save(_ctx: glue.Context, payload: str) -> None:
         edit = cast("dict[str, str]", json.loads(payload)) if payload.startswith("{") else {"text": payload}
         disk.write_text(edit["text"])
@@ -52,7 +53,8 @@ def editor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Ba
     bar._item_views["tasks"] = ItemView(view, bar)  # pyright: ignore[reportPrivateUsage]
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("bar", bar)
-    engine.loadData(b'''
+    engine.loadData(
+        b"""
 import QtQuick
 Item {
     property var content: bar.popup
@@ -61,11 +63,14 @@ Item {
         source: content.component || ""
     }
 }
-''', QUrl.fromLocalFile(str(tmp_path / "Editor.qml")))
+""",
+        QUrl.fromLocalFile(str(tmp_path / "Editor.qml")),
+    )
     bar.open("tasks", focus=True)
     pool.finish()
     app.processEvents()
     root = engine.rootObjects()[0]
+    bar.setProperty("testRoot", root)
     text = next(o for o in root.findChildren(QObject) if o.property("cursorPosition") is not None)
     yield bar, pool, text
     bar.close()
@@ -247,3 +252,41 @@ def test_returning_to_original_text_is_a_new_edit(
     while pool.jobs:
         pool.finish()
     assert cast("dict[str, object]", bar.property("popup"))["text"] == "original"
+
+
+def test_reopened_editor_stays_saving_until_all_queued_saves_finish(
+    editor: tuple[Bar, ControlledPool, QObject],
+) -> None:
+    from PySide6.QtCore import QMetaObject
+
+    bar, pool, text = editor
+    root = cast("QObject", bar.property("testRoot"))
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    text.setProperty("text", "first")
+    assert QMetaObject.invokeMethod(body, "save")
+    text.setProperty("text", "second")
+    assert QMetaObject.invokeMethod(body, "save")
+    bar.close()
+    QGuiApplication.processEvents()
+    bar.open("tasks", focus=True)
+    for job in list(pool.jobs):
+        if job.kind.startswith("popup"):
+            pool.jobs.remove(job)
+            job.run()
+    QGuiApplication.processEvents()
+    # The Loader keeps the detached previous component until deferred deletion.
+    editors = root.findChildren(QObject, "tasksEditor")
+    assert editors
+    text = editors[-1]
+    body = text.parent()
+    while body is not None and body.property("dirty") is None:
+        body = body.parent()
+    assert body is not None
+    assert body.property("saving")
+    pool.finish()
+    assert body.property("saving"), "The first acknowledgement must not enable recovery during the next save"
+    pool.finish()
+    assert not body.property("saving")
