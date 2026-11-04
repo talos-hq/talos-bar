@@ -62,13 +62,16 @@ jobs:
         # bar/README.md "Offscreen rendering").
         env:
           WGPU_BACKEND: vulkan
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          test -f "$VK_ICD_FILENAMES"
+          # The lavapipe ICD's file name varies by Mesa packaging (lvp_icd.json, lvp_icd.x86_64.json).
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
+          test -n "$icd" || { echo "no lavapipe ICD in /usr/share/vulkan/icd.d:"; ls /usr/share/vulkan/icd.d; exit 1; }
+          export VK_ICD_FILENAMES="$icd"; echo "VK_ICD_FILENAMES=$icd"
           (cd searchd && soldr cargo build --locked)
           dir="$RUNNER_TEMP/talos-ipc"; mkdir -m 700 "$dir"
           searchd/target/debug/talos-searchd --no-hotkey --endpoint "$dir/sock" &
-          sleep 2
+          for _ in $(seq 100); do test -S "$dir/sock" && break; sleep 0.1; done
+          test -S "$dir/sock" || { echo "talos-searchd did not bind $dir/sock within 10s"; exit 1; }
           unset WAYLAND_DISPLAY
           xvfb-run -a popover/target/debug/talos-popover --oneshot --query a --screenshot "$RUNNER_TEMP/popover.png" --endpoint "$dir/sock"
           size=$(stat -c %s "$RUNNER_TEMP/popover.png"); echo "popover.png: $size bytes"
@@ -106,13 +109,16 @@ jobs:
         # bar/README.md "Offscreen rendering").
         env:
           WGPU_BACKEND: vulkan
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          test -f "$VK_ICD_FILENAMES"
+          # The lavapipe ICD's file name varies by Mesa packaging (lvp_icd.json, lvp_icd.x86_64.json).
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
+          test -n "$icd" || { echo "no lavapipe ICD in /usr/share/vulkan/icd.d:"; ls /usr/share/vulkan/icd.d; exit 1; }
+          export VK_ICD_FILENAMES="$icd"; echo "VK_ICD_FILENAMES=$icd"
           (cd searchd && soldr cargo build --locked)
           dir="$RUNNER_TEMP/talos-ipc"; mkdir -m 700 "$dir"
           searchd/target/debug/talos-searchd --no-hotkey --endpoint "$dir/sock" &
-          sleep 2
+          for _ in $(seq 100); do test -S "$dir/sock" && break; sleep 0.1; done
+          test -S "$dir/sock" || { echo "talos-searchd did not bind $dir/sock within 10s"; exit 1; }
           unset WAYLAND_DISPLAY
           xvfb-run -a bar/target/debug/talos-bar-rs --screenshot "$RUNNER_TEMP/bar.png" --endpoint "$dir/sock"
           size=$(stat -c %s "$RUNNER_TEMP/bar.png"); echo "bar.png: $size bytes"

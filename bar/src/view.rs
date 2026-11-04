@@ -906,9 +906,9 @@ mod tests {
         let mut bits = Vec::new();
         for c in text.bytes().filter(|c| *c != b'=') {
             let v = ABC.iter().position(|a| *a == c).expect("base64");
-            bits.extend((0..6).rev().map(|i| (v >> i) & 1));
+            bits.extend((0..6).rev().map(|i| u8::from((v >> i) & 1 == 1)));
         }
-        let bytes: Vec<u8> = bits.chunks_exact(8).map(|b| b.iter().fold(0u8, |n, bit| n << 1 | u8::try_from(*bit).expect("bit"))).collect();
+        let bytes: Vec<u8> = bits.as_chunks::<8>().0.iter().map(|b| b.iter().fold(0u8, |n, bit| n << 1 | bit)).collect();
         String::from_utf8(bytes).expect("utf8")
     }
 

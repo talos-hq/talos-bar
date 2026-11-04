@@ -103,7 +103,11 @@ fn show_reaches_subscribers_and_status_counts_them() {
 
     let reply = request(&mut control, r#"{"op":"show"}"#);
     assert_eq!(reply, serde_json::json!({ "ok": true, "subscribers": 1 }));
-    sub.set_recv_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    // A hang guard where the transport has one: Windows named pipes reject I/O timeouts.
+    match sub.set_recv_timeout(Some(Duration::from_secs(5))) {
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {}
+        other => other.expect("timeout"),
+    }
     let mut event = String::new();
     BufReader::new(sub.try_clone().expect("clone")).read_line(&mut event).expect("event");
     assert_eq!(serde_json::from_str::<serde_json::Value>(&event).expect("json"), serde_json::json!({ "event": "show" }));
