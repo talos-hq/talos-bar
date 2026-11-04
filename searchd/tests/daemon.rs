@@ -90,3 +90,25 @@ fn lists_this_hosts_installed_apps() {
         .count();
     assert!(apps > 0, "no installed apps found: {reply}");
 }
+
+#[test]
+fn show_reaches_subscribers_and_status_counts_them() {
+    let (_daemon, endpoint) = start("show");
+    let mut control = connect(&endpoint);
+    assert_eq!(request(&mut control, r#"{"op":"status"}"#)["subscribers"], 0);
+
+    let mut sub = connect(&endpoint);
+    assert_eq!(request(&mut sub, r#"{"op":"subscribe"}"#), serde_json::json!({ "ok": true }));
+    assert_eq!(request(&mut control, r#"{"op":"status"}"#)["subscribers"], 1);
+
+    let reply = request(&mut control, r#"{"op":"show"}"#);
+    assert_eq!(reply, serde_json::json!({ "ok": true, "subscribers": 1 }));
+    // A hang guard where the transport has one: Windows named pipes reject I/O timeouts.
+    match sub.set_recv_timeout(Some(Duration::from_secs(5))) {
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {}
+        other => other.expect("timeout"),
+    }
+    let mut event = String::new();
+    BufReader::new(sub.try_clone().expect("clone")).read_line(&mut event).expect("event");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&event).expect("json"), serde_json::json!({ "event": "show" }));
+}
