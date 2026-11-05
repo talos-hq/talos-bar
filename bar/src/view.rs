@@ -4,6 +4,7 @@
 use crate::clock::{self, Cell};
 use crate::config::Config;
 use crate::disk::{self, Pressure, Scanner};
+use crate::diskview;
 use crate::feeds::{Cli, Feed, Job};
 use crate::layout;
 use crate::launch::Launcher;
@@ -620,11 +621,21 @@ impl App for Bar {
             if row.button(&tasks) {
                 clicked = Some((Kind::Tasks, tasks_x));
             }
-            if let Some(text) = &disk_cell {
-                let disk_x = x(row);
-                if row.button(text) {
-                    clicked = Some((Kind::Disk, disk_x));
-                }
+            if let Some(text) = &disk_cell
+                && row.button(text)
+            {
+                // The click opens the tree as a web page, per the item's spec:
+                // the dock is too narrow for a nested tree, and a page survives
+                // the bar restarting. Serving is a loopback socket; opening is
+                // the session's own browser.
+                self.disk.refresh(&disk::root());
+                let (rows, _, _) = self.disk.peek();
+                let pressure = self.pressure;
+                std::thread::spawn(move || {
+                    if let Err(error) = diskview::open(&rows, pressure) {
+                        eprintln!("talos-bar-rs: disk view failed: {error}");
+                    }
+                });
             }
             // What the left group actually took, button padding included.
             let left = full - row.available_width();

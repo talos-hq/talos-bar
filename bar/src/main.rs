@@ -7,6 +7,7 @@
 mod clock;
 mod config;
 mod disk;
+mod diskview;
 mod feeds;
 mod launch;
 mod layout;
