@@ -37,6 +37,8 @@ pub enum Act {
     OpenCalendar,
     /// Move the bar to the output with this name (the right-click screen menu).
     Screen(String),
+    /// Open the disk tree as a web page (the More panel's entry, and the tab).
+    DiskView,
 }
 
 /// One line of a panel.
