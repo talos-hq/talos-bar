@@ -358,6 +358,15 @@ fn percent_decode(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The tests share one process environment, so every test that sets a
+    /// variable holds this lock; otherwise one test's `remove_var` lands
+    /// between another's `set_var` and its use.
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn rows() -> Vec<Row> {
         vec![
             Row { depth: 1, name: "/home".to_owned(), bytes: 800, path: "/home".into() },
@@ -433,6 +442,7 @@ mod tests {
 
     #[test]
     fn opening_hands_the_url_to_the_configured_browser() {
+        let _env = env_lock();
         let dir = std::env::temp_dir().join(format!("talos-diskview-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let record = dir.join("url");
@@ -470,6 +480,7 @@ mod tests {
 
     #[test]
     fn trashing_moves_the_file_and_records_where_it_came_from() {
+        let _env = env_lock();
         let (root, data) = sandbox("moves");
         let junk = root.join("junk/big.bin");
         std::fs::write(&junk, b"x").expect("file");
@@ -489,6 +500,7 @@ mod tests {
 
     #[test]
     fn trashing_refuses_paths_outside_the_scan_root() {
+        let _env = env_lock();
         let (root, data) = sandbox("outside");
         let outside = data.join("elsewhere.bin");
         std::fs::write(&outside, b"x").expect("file");
@@ -502,6 +514,7 @@ mod tests {
 
     #[test]
     fn trashing_refuses_the_root_itself() {
+        let _env = env_lock();
         let (root, data) = sandbox("root");
         unsafe { std::env::set_var("XDG_DATA_HOME", &data) };
         let error = trash(&format!("path={}", percent_encode(&root.to_string_lossy())), &root)
@@ -513,6 +526,7 @@ mod tests {
 
     #[test]
     fn the_trash_kill_switch_is_honoured() {
+        let _env = env_lock();
         let (root, data) = sandbox("off");
         let junk = root.join("junk/x.bin");
         std::fs::write(&junk, b"x").expect("file");
@@ -532,6 +546,7 @@ mod tests {
 
     #[test]
     fn the_trash_endpoint_is_wired_to_the_post_route() {
+        let _env = env_lock();
         let (root, data) = sandbox("post");
         let junk = root.join("junk/posted.bin");
         std::fs::write(&junk, b"x").expect("file");
