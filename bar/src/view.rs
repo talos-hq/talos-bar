@@ -3,6 +3,7 @@
 
 use crate::clock::{self, Cell};
 use crate::config::Config;
+use crate::disk::{self, Pressure, Scanner};
 use crate::feeds::{Cli, Feed, Job};
 use crate::layout;
 use crate::launch::Launcher;
@@ -26,6 +27,7 @@ pub const TASKS_WIDTH: f32 = 420.0;
 pub const AGENDA_WIDTH: f32 = 460.0;
 pub const WORLD_WIDTH: f32 = 440.0;
 pub const SCREENS_WIDTH: f32 = 300.0;
+pub const DISK_WIDTH: f32 = 560.0;
 /// The widest the agenda cell grows; a long title is cut with `…` before this.
 pub const AGENDA_CELL_MAX: f32 = 300.0;
 /// Kept free before the status label (logical px), so rounding never clips it.
@@ -43,6 +45,8 @@ pub enum Kind {
     World,
     /// The right-click menu: which output the bar is on.
     Screens,
+    /// Where the space went, when the disk is nearly full.
+    Disk,
 }
 
 impl Kind {
@@ -52,6 +56,7 @@ impl Kind {
             Self::Agenda => AGENDA_WIDTH,
             Self::World => WORLD_WIDTH,
             Self::Screens => SCREENS_WIDTH,
+            Self::Disk => DISK_WIDTH,
         }
     }
 }
@@ -185,6 +190,10 @@ pub struct Bar {
     pub draft: String,
     /// The whole-file editor's text as last loaded or saved, to tell an unsaved edit.
     file_base: Option<String>,
+    /// The disk panel's scan, kept across frames so reopening does not rescan.
+    pub disk: Scanner,
+    /// The last `statvfs` reading (one syscall, retaken every frame).
+    pub pressure: Option<Pressure>,
     /// Actions from the desktop's tray item (`tray`), if one registered.
     pub tray: Option<std::sync::mpsc::Receiver<crate::tray::Act>>,
     /// The running task edit (and its verb), and the line the tasks panel shows about the last one.
@@ -234,6 +243,47 @@ pub fn closes(events: &[Event]) -> bool {
     })
 }
 
+/// The disk panel: totals, then one row per directory, indented by depth.
+fn disk_lines(
+    pressure: Option<Pressure>,
+    rows: &[disk::Row],
+    running: bool,
+    error: Option<&str>,
+) -> Vec<Line> {
+    let mut lines = vec![Line::Heading("Disk".to_owned())];
+    if let Some(pressure) = pressure {
+        lines.push(Line::Text(format!(
+            "{} used of {} · {} free",
+            disk::human(pressure.used()),
+            disk::human(pressure.total),
+            disk::human(pressure.free),
+        )));
+    }
+    if let Some(error) = error {
+        lines.push(Line::Text(error.to_owned()));
+        return lines;
+    }
+    if rows.is_empty() {
+        lines.push(Line::Text(if running {
+            "scanning…".to_owned()
+        } else {
+            format!("nothing above {}", disk::human(disk::MIN_BYTES))
+        }));
+        return lines;
+    }
+    for row in rows {
+        let indent = "  ".repeat(row.depth.saturating_sub(1));
+        lines.push(Line::Pair(format!("{indent}{}", row.name), disk::human(row.bytes)));
+    }
+    if running {
+        lines.push(Line::Separator);
+        lines.push(Line::Text("rescanning…".to_owned()));
+    }
+    lines.push(Line::Separator);
+    lines.push(Line::Text("read-only: nothing is deleted here".to_owned()));
+    lines
+}
+
 impl Bar {
     pub fn new(
         config: Config,
@@ -272,6 +322,8 @@ impl Bar {
             outputs: Vec::new(),
             picked: None,
             moving: None,
+            disk: Scanner::default(),
+            pressure: None,
         }
     }
 
@@ -305,6 +357,14 @@ impl Bar {
                 (lines, loading)
             }
             Kind::Screens => (panel::screen_lines(&self.outputs), false),
+            Kind::Disk => {
+                // Opening the panel is the request to look: a stale scan is
+                // replaced in the background, and what exists is drawn until
+                // the new one lands.
+                self.disk.refresh(&disk::root());
+                let (rows, running, error) = self.disk.peek();
+                (disk_lines(self.pressure, &rows, running, error.as_deref()), running)
+            }
             Kind::World => {
                 let table = clock::table(self.now.unwrap_or_else(Utc::now), self.local, &self.config.clock.zones);
                 (panel::world_lines(&table), false)
@@ -495,7 +555,7 @@ impl Bar {
             match kind {
                 Kind::Tasks => self.feeds.tasks.refresh(),
                 Kind::Agenda => self.feeds.agenda.refresh(),
-                Kind::World | Kind::Screens => {}
+                Kind::World | Kind::Screens | Kind::Disk => {}
             }
         }
     }
@@ -533,6 +593,10 @@ impl App for Bar {
         }
         self.warned = true;
         let status = self.status.lock().map_or(Status::Unknown, |s| *s).text();
+        // One statvfs per frame: the tab exists only above the threshold, so
+        // the bar says nothing about a disk that still has room.
+        self.pressure = Pressure::read(&disk::root()).ok();
+        let disk_cell = self.pressure.and_then(|p| disk::cell(p, disk::threshold()));
         let tasks = panel::tasks_cell(self.feeds.tasks.get().0.as_ref());
         let (size, spacing) = (self.text_size, self.spacing);
         let (time, date) = (world.local.time.clone(), world.date.clone());
@@ -555,6 +619,12 @@ impl App for Bar {
             cells.0 = tasks_x;
             if row.button(&tasks) {
                 clicked = Some((Kind::Tasks, tasks_x));
+            }
+            if let Some(text) = &disk_cell {
+                let disk_x = x(row);
+                if row.button(text) {
+                    clicked = Some((Kind::Disk, disk_x));
+                }
             }
             // What the left group actually took, button padding included.
             let left = full - row.available_width();
@@ -1131,5 +1201,26 @@ mod tests {
             vec!["xdg-open".to_owned(), "https://zoom.us/j/123456789".to_owned()],
             vec!["kioclient".to_owned(), "exec".to_owned(), "org.kde.korganizer.desktop".to_owned()],
         ]);
+    }
+
+    #[test]
+    fn the_disk_panel_prints_totals_rows_and_state() {
+        let pressure = Some(Pressure { total: 1_000, free: 50 });
+        let rows = vec![
+            disk::Row { depth: 1, name: "/home".to_owned(), bytes: 800 },
+            disk::Row { depth: 2, name: "/home/video".to_owned(), bytes: 600 },
+        ];
+        let lines = disk_lines(pressure, &rows, false, None);
+        assert_eq!(lines[0], Line::Heading("Disk".to_owned()));
+        assert_eq!(lines[1], Line::Text("950 B used of 1000 B · 50 B free".to_owned()));
+        assert_eq!(lines[2], Line::Pair("/home".to_owned(), "800 B".to_owned()));
+        assert_eq!(lines[3], Line::Pair("  /home/video".to_owned(), "600 B".to_owned()));
+        assert!(lines.contains(&Line::Text("read-only: nothing is deleted here".to_owned())));
+
+        // Before the first scan lands there is nothing to show but the wait.
+        let pending = disk_lines(None, &[], true, None);
+        assert!(pending.iter().any(|line| *line == Line::Text("scanning…".to_owned())));
+        let failed = disk_lines(None, &[], false, None);
+        assert!(failed.iter().any(|line| *line == Line::Text("nothing above 64.0 MiB".to_owned())));
     }
 }
