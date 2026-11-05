@@ -60,3 +60,9 @@ above windows and reserves its height. It defaults to the top right so it can
 run next to the centred Plasma top panel. The wrapper clears the session's
 `QT_PLUGIN_PATH`/`QML2_IMPORT_PATH`, because Plasma exports paths for its own
 Qt version and loading them aborts QtQuick.
+
+## CI
+
+CI is local. `bosn run --task ci` runs the Linux checks in Docker. Enable the gate once per clone with
+`git config core.hooksPath .githooks`; it runs on every push and skips trees that already passed.
+Windows and macOS have no automated coverage while `platforms.yml` is disabled.

@@ -1,0 +1,31 @@
+# Local CI: `bosn run --task ci`, enforced by .githooks/pre-push.
+# The checkout is read-only; build state lives in bosn-managed volumes.
+[stack.ci]
+dockerfile = "bosn/Dockerfile"
+default = true
+workdir = "/repo"
+
+[stack.ci.mounts]
+repo = { source = ".", destination = "/repo", readonly = true }
+
+[stack.ci.volumes]
+target = { scope = "stack", destination = "/build/target" }
+venv = { scope = "stack", destination = "/build/venv" }
+uv-cache = { scope = "machine", destination = "/root/.cache/uv" }
+cargo-home = { scope = "machine", destination = "/root/.cargo" }
+soldr-home = { scope = "stack", destination = "/root/.soldr" }
+
+[stack.ci.env]
+UV_PROJECT_ENVIRONMENT = "/build/venv"
+UV_PYTHON = "3.12"
+UV_PYTHON_INSTALL_DIR = "/root/.cache/uv-python"
+UV_CACHE_DIR = "/root/.cache/uv"
+RUFF_CACHE_DIR = "/tmp/ruff"
+PYTHONDONTWRITEBYTECODE = "1"
+PYTEST_ADDOPTS = "-p no:cacheprovider"
+QT_QPA_PLATFORM = "offscreen"
+SOLDR_ALLOW_UNPINNED = "1"
+
+[task.ci]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh"
