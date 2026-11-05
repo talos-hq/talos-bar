@@ -6,6 +6,7 @@
 
 mod clock;
 mod config;
+mod disk;
 mod feeds;
 mod launch;
 mod layout;
@@ -35,7 +36,7 @@ struct Args {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: talos-bar-rs [--endpoint E] [--config PATH] [--no-tray] [--screenshot PNG [--panel tasks|agenda|world]]");
+    eprintln!("usage: talos-bar-rs [--endpoint E] [--config PATH] [--no-tray] [--screenshot PNG [--panel tasks|agenda|world|disk]]");
     std::process::exit(2);
 }
 
@@ -53,6 +54,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Option<Args> {
                     "tasks" => view::Kind::Tasks,
                     "agenda" => view::Kind::Agenda,
                     "world" => view::Kind::World,
+                    "disk" => view::Kind::Disk,
                     _ => return None,
                 });
             }
@@ -107,7 +109,7 @@ fn panel_shot(bar: view::Bar, kind: view::Kind, theme: Theme) -> Result<(PanelSh
     match kind {
         view::Kind::Tasks => bar.feeds.tasks.refresh(),
         view::Kind::Agenda => bar.feeds.agenda.refresh(),
-        view::Kind::World | view::Kind::Screens => {}
+        view::Kind::World | view::Kind::Screens | view::Kind::Disk => {}
     }
     let deadline = std::time::Instant::now() + feeds::TIMEOUT;
     while bar.panel_lines(kind).1 {

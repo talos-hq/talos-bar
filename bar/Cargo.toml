@@ -10,7 +10,7 @@ name = "talos-bar-rs"
 path = "src/main.rs"
 
 [dependencies]
-kernal-api = { version = "0.1.38", features = ["gfx-egui", "ipc", "system-tray"] }
+kernal-api = { version = "0.1.39", features = ["gfx-egui", "ipc", "system-tray", "fs-scan"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 chrono-tz = "=0.10.4"
 iana-time-zone = "=0.1.65"
