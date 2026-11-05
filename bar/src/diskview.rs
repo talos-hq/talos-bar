@@ -565,6 +565,54 @@ mod tests {
         unsafe { std::env::remove_var("XDG_DATA_HOME") };
     }
 
+    /// The whole chain on one real filesystem: a real `fs_scan` of a temp tree,
+    /// the page built from its rows, a GET of that page, and a POST that really
+    /// moves a file to the trash.
+    #[test]
+    fn a_real_scan_serves_a_page_whose_trash_button_moves_a_file() {
+        let _env = env_lock();
+        let base = std::env::temp_dir().join(format!("talos-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let data = base.join("data");
+        std::fs::create_dir_all(root.join("cache")).expect("root");
+        std::fs::create_dir_all(&data).expect("data");
+        std::fs::write(root.join("cache/blob.bin"), vec![7u8; 4096]).expect("file");
+        std::fs::write(root.join("small.bin"), vec![7u8; 512]).expect("file");
+        unsafe { std::env::set_var("XDG_DATA_HOME", &data) };
+
+        let rows = crate::disk::scan_with(&root, 3, 1, 20).expect("scan");
+        assert!(!rows.is_empty(), "the scan saw the fixture");
+        let page = render(&rows, None);
+        assert!(page.contains("blob.bin"), "the page lists the file");
+        assert!(page.contains("cache"), "and its directory");
+
+        let (port, _handle) = serve_once(&page, &root);
+        let response = request(port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response:.60}");
+        assert!(response.contains("blob.bin"));
+
+        let blob = rows
+            .iter()
+            .find(|row| row.name == "blob.bin")
+            .expect("the file row")
+            .path
+            .clone();
+        let body = format!("path={}", percent_encode(&blob.to_string_lossy()));
+        let response = request(
+            port,
+            &format!(
+                "POST /trash HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            ),
+        );
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response:.80}");
+        assert!(!blob.exists(), "the scanned file left its directory");
+        assert!(data.join("Trash/files/blob.bin").exists(), "and is in the trash");
+        unsafe { std::env::remove_var("XDG_DATA_HOME") };
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn percent_round_trips_a_path_with_spaces_and_quotes() {
         let path = "/tmp/a b\"c'd%";

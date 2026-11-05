@@ -302,7 +302,18 @@ impl Scanner {
 }
 
 /// Scan `root` and produce the panel's rows.
-fn scan(root: &Path) -> Result<Vec<Row>, String> {
+pub(crate) fn scan(root: &Path) -> Result<Vec<Row>, String> {
+    scan_with(root, MAX_DEPTH, MIN_BYTES, MAX_ROWS)
+}
+
+/// [`scan`] with the cut-offs chosen by the caller, so a test can scan a tree
+/// smaller than the panel's 64 MiB floor.
+pub(crate) fn scan_with(
+    root: &Path,
+    max_depth: usize,
+    min_bytes: u64,
+    max_rows: usize,
+) -> Result<Vec<Row>, String> {
     let options = ScanOptions {
         one_filesystem: true,
         ..ScanOptions::default()
@@ -326,7 +337,7 @@ fn scan(root: &Path) -> Result<Vec<Row>, String> {
         true
     })
     .map_err(|error| error.to_string())?;
-    Ok(Tree::from_entries_with_paths(entries).rows(MAX_DEPTH, MIN_BYTES, MAX_ROWS))
+    Ok(Tree::from_entries_with_paths(entries).rows(max_depth, min_bytes, max_rows))
 }
 
 #[cfg(test)]
