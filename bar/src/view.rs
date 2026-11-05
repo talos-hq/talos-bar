@@ -424,7 +424,7 @@ impl Bar {
             let (rows, _, _) = self.disk.peek();
             let pressure = self.pressure;
             std::thread::spawn(move || {
-                if let Err(error) = diskview::open(&rows, pressure) {
+                if let Err(error) = diskview::open(&rows, pressure, &disk::root()) {
                     eprintln!("talos-bar-rs: disk view failed: {error}");
                 }
             });
@@ -664,7 +664,7 @@ impl App for Bar {
                 let (rows, _, _) = self.disk.peek();
                 let pressure = self.pressure;
                 std::thread::spawn(move || {
-                    if let Err(error) = diskview::open(&rows, pressure) {
+                    if let Err(error) = diskview::open(&rows, pressure, &disk::root()) {
                         eprintln!("talos-bar-rs: disk view failed: {error}");
                     }
                 });
@@ -1255,8 +1255,8 @@ mod tests {
     fn the_disk_panel_prints_totals_rows_and_state() {
         let pressure = Some(Pressure { total: 1_000, free: 50 });
         let rows = vec![
-            disk::Row { depth: 1, name: "/home".to_owned(), bytes: 800 },
-            disk::Row { depth: 2, name: "/home/video".to_owned(), bytes: 600 },
+            disk::Row { depth: 1, name: "/home".to_owned(), bytes: 800, path: "/home".into() },
+            disk::Row { depth: 2, name: "/home/video".to_owned(), bytes: 600, path: "/home/video".into() },
         ];
         let lines = disk_lines(pressure, &rows, false, None);
         assert_eq!(lines[0], Line::Heading("Disk".to_owned()));
