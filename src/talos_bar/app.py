@@ -41,7 +41,7 @@ class _Job(QRunnable):
     def run(self) -> None:
         try:
             out = self.fn(self.bar.ctx)
-            self.bar.result.emit(self.item_id, self.kind, out if out is not None else "", False)
+            self.bar.result.emit(self.item_id, self.kind, out, False)
         except Exception as exc:
             traceback.print_exc()
             self.bar.result.emit(self.item_id, self.kind, str(exc), True)
@@ -56,6 +56,7 @@ def _blank_view(it: glue.Item) -> dict[str, object]:
         "dot": "",
         "tooltip": "",
         "error": False,
+        "hidden": False,
         "plain": it.plain,
         "expandable": it.popup is not None,
         "hover": it.hover,
@@ -258,6 +259,10 @@ class Bar(QObject):
             return
         v = self._view[item_id]
         v["error"] = error
+        # `None` from a refresh is the item saying "not now": the bar hides the
+        # tab instead of drawing an empty slot. Any real output shows it again.
+        if not error:
+            v["hidden"] = out is None
         if isinstance(out, dict):
             rich = cast("glue.Rich", out)
             v["text"] = rich.get("text", str(v["text"]))

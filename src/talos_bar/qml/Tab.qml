@@ -11,6 +11,9 @@ Item {
     readonly property bool hovered: hover.hovered
     signal activated()
 
+    // A refresh that returns None hides the tab (the disk item before its
+    // threshold is crossed); an invisible child takes no width in the Row.
+    visible: !model.hidden
     implicitWidth: (model.plain ? content.implicitWidth + 12 : Math.max(64, content.implicitWidth + 22))
     implicitHeight: Theme.barHeight
 
