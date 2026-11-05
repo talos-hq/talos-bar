@@ -110,7 +110,7 @@ fn panel_shot(bar: view::Bar, kind: view::Kind, theme: Theme) -> Result<(PanelSh
     match kind {
         view::Kind::Tasks => bar.feeds.tasks.refresh(),
         view::Kind::Agenda => bar.feeds.agenda.refresh(),
-        view::Kind::World | view::Kind::Screens | view::Kind::Disk => {}
+        view::Kind::World | view::Kind::Screens | view::Kind::Disk | view::Kind::More => {}
     }
     let deadline = std::time::Instant::now() + feeds::TIMEOUT;
     while bar.panel_lines(kind).1 {
