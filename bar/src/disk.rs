@@ -111,12 +111,17 @@ pub fn human(bytes: u64) -> String {
     format!("{bytes} B")
 }
 
-/// One row of the panel: how far to indent, what it is called, how big.
+/// One row: how far to indent, what it is called, how big, and where it is.
+///
+/// The absolute path is carried so the web page can act on a row (move it to
+/// the trash) without guessing: the scan already knows it, and a page that
+/// re-derived paths from names would act on the wrong file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub depth: usize,
     pub name: String,
     pub bytes: u64,
+    pub path: std::path::PathBuf,
 }
 
 /// A whole-root scan, aggregated into a tree.
@@ -129,6 +134,8 @@ pub struct Tree {
 #[derive(Clone, Debug)]
 struct Node {
     name: String,
+    /// Absolute path, as the scan reported it.
+    path: std::path::PathBuf,
     own: u64,
     children: Vec<usize>,
 }
@@ -141,17 +148,21 @@ impl Tree {
     /// resolved as keys appear rather than by walking in order; a child whose
     /// parent never arrives (the directory vanished mid-scan) is dropped rather
     /// than invented. The first entry is the root the scan started from.
+    #[cfg(test)]
     pub fn from_entries(entries: impl IntoIterator<Item = (String, u64, u64, u64)>) -> Self {
+        Self::from_entries_with_paths(entries.into_iter().map(|(name, own, parent, key)| (name, own, parent, key, std::path::PathBuf::new())))
+    }
+
+    /// As [`Tree::from_entries`], with the absolute path for each entry.
+    pub fn from_entries_with_paths(
+        entries: impl IntoIterator<Item = (String, u64, u64, u64, std::path::PathBuf)>,
+    ) -> Self {
         let mut tree = Tree::default();
         let mut seen: HashMap<u64, usize> = HashMap::new();
         let mut waiting: HashMap<u64, Vec<usize>> = HashMap::new();
-        for (name, own, parent, key) in entries {
+        for (name, own, parent, key, path) in entries {
             let index = tree.nodes.len();
-            tree.nodes.push(Node {
-                name,
-                own,
-                children: Vec::new(),
-            });
+            tree.nodes.push(Node { name, path, own, children: Vec::new() });
             if tree.root.is_none() {
                 tree.root = Some(index);
             }
@@ -217,6 +228,7 @@ impl Tree {
                 depth: depth + 1,
                 name: self.nodes[child].name.clone(),
                 bytes,
+                path: self.nodes[child].path.clone(),
             });
             if depth + 1 < max_depth {
                 self.push_rows(child, depth + 1, max_depth, min_bytes, limit, rows);
@@ -290,14 +302,25 @@ impl Scanner {
 }
 
 /// Scan `root` and produce the panel's rows.
-fn scan(root: &Path) -> Result<Vec<Row>, String> {
+pub(crate) fn scan(root: &Path) -> Result<Vec<Row>, String> {
+    scan_with(root, MAX_DEPTH, MIN_BYTES, MAX_ROWS)
+}
+
+/// [`scan`] with the cut-offs chosen by the caller, so a test can scan a tree
+/// smaller than the panel's 64 MiB floor.
+pub(crate) fn scan_with(
+    root: &Path,
+    max_depth: usize,
+    min_bytes: u64,
+    max_rows: usize,
+) -> Result<Vec<Row>, String> {
     let options = ScanOptions {
         one_filesystem: true,
         ..ScanOptions::default()
     };
     // The facade hands out opaque identities; the tree only needs to match a
     // child to its parent, so each entry gets a local key as it arrives.
-    let mut entries = Vec::new();
+    let mut entries: Vec<(String, u64, u64, u64, std::path::PathBuf)> = Vec::new();
     let mut keys: HashMap<kernal_api::fs_scan::EntryId, u64> = HashMap::new();
     let mut next = 0u64;
     fs_scan::scan_stream(root, &options, |entry: ScanEntry<'_>| {
@@ -306,17 +329,15 @@ fn scan(root: &Path) -> Result<Vec<Row>, String> {
             next += 1;
             keys.insert(entry.identity.entry_id(), key);
             let parent = keys.get(&entry.parent).copied().unwrap_or(u64::MAX);
-            entries.push((
-                entry.relative_name.to_string_lossy().into_owned(),
-                entry.allocated,
-                parent,
-                key,
-            ));
+            let relative = entry.relative_name.to_string_lossy();
+            let path = root.join(relative.as_ref());
+            let name = relative.trim_end_matches('/').rsplit('/').next().unwrap_or("/").to_owned();
+            entries.push((name, entry.allocated, parent, key, path));
         }
         true
     })
     .map_err(|error| error.to_string())?;
-    Ok(Tree::from_entries(entries).rows(MAX_DEPTH, MIN_BYTES, MAX_ROWS))
+    Ok(Tree::from_entries_with_paths(entries).rows(max_depth, min_bytes, max_rows))
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 use crate::clock::{self, Cell};
 use crate::config::Config;
 use crate::disk::{self, Pressure, Scanner};
+use crate::diskview;
 use crate::feeds::{Cli, Feed, Job};
 use crate::layout;
 use crate::launch::Launcher;
@@ -28,6 +29,7 @@ pub const AGENDA_WIDTH: f32 = 460.0;
 pub const WORLD_WIDTH: f32 = 440.0;
 pub const SCREENS_WIDTH: f32 = 300.0;
 pub const DISK_WIDTH: f32 = 560.0;
+pub const MORE_WIDTH: f32 = 360.0;
 /// The widest the agenda cell grows; a long title is cut with `…` before this.
 pub const AGENDA_CELL_MAX: f32 = 300.0;
 /// Kept free before the status label (logical px), so rounding never clips it.
@@ -47,6 +49,8 @@ pub enum Kind {
     Screens,
     /// Where the space went, when the disk is nearly full.
     Disk,
+    /// The overflow: features that are not urgent enough for the main line.
+    More,
 }
 
 impl Kind {
@@ -57,6 +61,7 @@ impl Kind {
             Self::World => WORLD_WIDTH,
             Self::Screens => SCREENS_WIDTH,
             Self::Disk => DISK_WIDTH,
+            Self::More => MORE_WIDTH,
         }
     }
 }
@@ -243,6 +248,19 @@ pub fn closes(events: &[Event]) -> bool {
     })
 }
 
+/// The overflow panel: the features that are not urgent enough for the main
+/// line, each one a row that opens it.
+fn more_lines(pressure: Option<Pressure>) -> Vec<Line> {
+    let mut lines = vec![Line::Heading("More".to_owned())];
+    let usage = pressure.map_or_else(|| "disk usage unavailable".to_owned(), |p| {
+        format!("{}% used — {} free", p.percent(), disk::human(p.free))
+    });
+    lines.push(Line::Row { text: format!("Disk — {usage}"), current: false, act: Some(Act::DiskView) });
+    lines.push(Line::Separator);
+    lines.push(Line::Text("The disk tree opens in your browser; it is read-only.".to_owned()));
+    lines
+}
+
 /// The disk panel: totals, then one row per directory, indented by depth.
 fn disk_lines(
     pressure: Option<Pressure>,
@@ -358,6 +376,8 @@ impl Bar {
             }
             Kind::Screens => (panel::screen_lines(&self.outputs), false),
             Kind::Disk => {
+                // The panel lists what is large; the click on the cell opens
+                // the page. `--panel disk` renders it for a snapshot.
                 // Opening the panel is the request to look: a stale scan is
                 // replaced in the background, and what exists is drawn until
                 // the new one lands.
@@ -369,6 +389,7 @@ impl Bar {
                 let table = clock::table(self.now.unwrap_or_else(Utc::now), self.local, &self.config.clock.zones);
                 (panel::world_lines(&table), false)
             }
+            Kind::More => (more_lines(self.pressure), false),
         }
     }
 
@@ -398,6 +419,17 @@ impl Bar {
 
     /// Do what a click in a panel asked. Launches close the panel, as the QML's `bar.close()`.
     pub fn act(&mut self, act: Act) {
+        if act == Act::DiskView {
+            self.disk.refresh(&disk::root());
+            let (rows, _, _) = self.disk.peek();
+            let pressure = self.pressure;
+            std::thread::spawn(move || {
+                if let Err(error) = diskview::open(&rows, pressure, &disk::root()) {
+                    eprintln!("talos-bar-rs: disk view failed: {error}");
+                }
+            });
+            return;
+        }
         let launched = match act {
             Act::Toggle(index) => return self.toggle(index),
             Act::Pick(index) => {
@@ -445,6 +477,7 @@ impl Bar {
             Act::Join(row) => self.feeds.launch.join(&row),
             Act::Open(url) => self.feeds.launch.open(&url),
             Act::OpenCalendar => self.feeds.launch.calendar(),
+            Act::DiskView => return,
             Act::Screen(name) => {
                 self.picked = Some(name);
                 self.close();
@@ -555,7 +588,7 @@ impl Bar {
             match kind {
                 Kind::Tasks => self.feeds.tasks.refresh(),
                 Kind::Agenda => self.feeds.agenda.refresh(),
-                Kind::World | Kind::Screens | Kind::Disk => {}
+                Kind::World | Kind::Screens | Kind::Disk | Kind::More => {}
             }
         }
     }
@@ -620,11 +653,21 @@ impl App for Bar {
             if row.button(&tasks) {
                 clicked = Some((Kind::Tasks, tasks_x));
             }
-            if let Some(text) = &disk_cell {
-                let disk_x = x(row);
-                if row.button(text) {
-                    clicked = Some((Kind::Disk, disk_x));
-                }
+            if let Some(text) = &disk_cell
+                && row.button(text)
+            {
+                // The click opens the tree as a web page, per the item's spec:
+                // the dock is too narrow for a nested tree, and a page survives
+                // the bar restarting. Serving is a loopback socket; opening is
+                // the session's own browser.
+                self.disk.refresh(&disk::root());
+                let (rows, _, _) = self.disk.peek();
+                let pressure = self.pressure;
+                std::thread::spawn(move || {
+                    if let Err(error) = diskview::open(&rows, pressure, &disk::root()) {
+                        eprintln!("talos-bar-rs: disk view failed: {error}");
+                    }
+                });
             }
             // What the left group actually took, button padding included.
             let left = full - row.available_width();
@@ -654,6 +697,11 @@ impl App for Bar {
             }
             for zone in &zone_texts[..split.zones] {
                 row.label(zone);
+            }
+            // The overflow arrow: everything the main line does not carry.
+            let more_x = x(row);
+            if row.button("⋯") {
+                clicked = Some((Kind::More, more_x));
             }
             // The agenda cell gets what is really left (measured now, not estimated), less the
             // status and slack; a fit bar instead gets what the screen's edge leaves.
@@ -1207,8 +1255,8 @@ mod tests {
     fn the_disk_panel_prints_totals_rows_and_state() {
         let pressure = Some(Pressure { total: 1_000, free: 50 });
         let rows = vec![
-            disk::Row { depth: 1, name: "/home".to_owned(), bytes: 800 },
-            disk::Row { depth: 2, name: "/home/video".to_owned(), bytes: 600 },
+            disk::Row { depth: 1, name: "/home".to_owned(), bytes: 800, path: "/home".into() },
+            disk::Row { depth: 2, name: "/home/video".to_owned(), bytes: 600, path: "/home/video".into() },
         ];
         let lines = disk_lines(pressure, &rows, false, None);
         assert_eq!(lines[0], Line::Heading("Disk".to_owned()));
@@ -1222,5 +1270,20 @@ mod tests {
         assert!(pending.iter().any(|line| *line == Line::Text("scanning…".to_owned())));
         let failed = disk_lines(None, &[], false, None);
         assert!(failed.iter().any(|line| *line == Line::Text("nothing above 64.0 MiB".to_owned())));
+    }
+
+    #[test]
+    fn the_more_panel_carries_the_disk_entry() {
+        let lines = more_lines(Some(Pressure { total: 1_000, free: 150 }));
+        assert_eq!(lines[0], Line::Heading("More".to_owned()));
+        let row = lines
+            .iter()
+            .find_map(|line| match line {
+                Line::Row { text, act, .. } => Some((text.clone(), act.clone())),
+                _ => None,
+            })
+            .expect("the disk row");
+        assert!(row.0.starts_with("Disk — 85% used"), "{}", row.0);
+        assert_eq!(row.1, Some(Act::DiskView));
     }
 }
