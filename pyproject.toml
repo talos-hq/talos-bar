@@ -32,14 +32,15 @@ target-version = "py310"
 src = ["src", "tests"]
 # Carried over verbatim from ~/dev/nixos, which lints them with its own
 # stricter config; keep them byte-identical rather than restyle them here.
-extend-exclude = ["src/talos_bar/scripts", "tests/scripts"]
+# tests/test_ci_gate.py is copied unchanged too; the gate lane checks it.
+extend-exclude = ["src/talos_bar/scripts", "tests/scripts", "tests/test_ci_gate.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ANN"]
 
 [tool.basedpyright]
 include = ["src", "tests"]
-exclude = ["src/talos_bar/scripts", "tests/scripts"]
+exclude = ["src/talos_bar/scripts", "tests/scripts", "tests/test_ci_gate.py"]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false

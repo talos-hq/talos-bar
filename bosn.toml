@@ -1,4 +1,4 @@
-# Local CI: `bosn run --task ci`, enforced by .githooks/pre-push.
+# Local CI: lanes of the local gate (ci.toml), or all of them with `bosn run --task ci`.
 # The checkout is read-only; build state lives in bosn-managed volumes.
 [stack.ci]
 dockerfile = "bosn/Dockerfile"
@@ -29,3 +29,27 @@ SOLDR_ALLOW_UNPINNED = "1"
 [task.ci]
 stack = "ci"
 cmd = "bash /repo/bosn/ci.sh"
+
+[task.gate]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh gate"
+
+[task.searchd]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh searchd"
+
+[task.popover]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh popover"
+
+[task.bar]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh bar"
+
+[task.python]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh python"
+
+[task.rendering]
+stack = "ci"
+cmd = "bash /repo/bosn/ci.sh rendering"
