@@ -63,6 +63,7 @@ Qt version and loading them aborts QtQuick.
 
 ## CI
 
-CI is local. `bosn run --task ci` runs the Linux checks in Docker. Enable the gate once per clone with
-`git config core.hooksPath .githooks`; it runs on every push and skips trees that already passed.
+CI is local: see [ci/README.md](ci/README.md). `flock ~/.local/state/ci-gate.lock ./ci.py run` runs the
+Linux checks in Docker, one lane per crate plus Python, and the pre-push hook posts the `local-gate`
+status once they pass. `bosn run --task ci` runs every lane without the gate.
 Windows and macOS have no automated coverage while `platforms.yml` is disabled.

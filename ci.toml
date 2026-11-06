@@ -1,0 +1,84 @@
+# The CI contract; see ci/README.md. Every tracked file belongs to the first module
+# that matches it. A lane re-runs only when a file in its module closure, or its own
+# definition, changes. `./ci.py check` fails on an unmapped file, an undeclared
+# import or an unassigned test, so skipping a lane stays sound.
+
+[gate]
+status_context = "local-gate"
+base = "origin/main"
+package = "talos_bar"
+source_root = "src"
+
+[modules.searchd]
+deps = []
+paths = ["searchd/**"]
+
+[modules.popover]
+deps = []
+paths = ["popover/**"]
+
+[modules.bar]
+deps = []
+paths = ["bar/**"]
+
+[modules.gate]
+deps = []
+paths = ["ci.py", "ci.toml", "ci/**", "tests/test_ci_gate.py"]
+
+# The test image and lane script. Every lane runs in it.
+[modules.ci-env]
+deps = []
+paths = ["bosn/**", "bosn.toml"]
+
+[modules.pyenv]
+deps = []
+paths = ["pyproject.toml", "uv.lock"]
+
+[modules.python]
+deps = ["pyenv"]
+paths = ["src/**", "tests/**"]
+
+# Read by no lane: the Windows and macOS workflow, Nix packaging, docs, and two
+# stray tracked files (`result`, `x`).
+[modules.repo]
+deps = []
+paths = [
+  "README.md", "LICENSE", "docs/**", ".github/**", ".gitignore",
+  "flake.nix", "flake.lock", "result", "x",
+]
+
+[lanes.gate]
+modules = ["gate", "ci-env", "pyenv"]
+tests = ["tests/test_ci_gate.py"]
+run = ["bosn", "run", "--task", "gate"]
+
+[lanes.searchd]
+modules = ["searchd", "ci-env"]
+run = ["bosn", "run", "--task", "searchd"]
+
+[lanes.popover]
+modules = ["popover", "ci-env"]
+run = ["bosn", "run", "--task", "popover"]
+
+[lanes.bar]
+modules = ["bar", "ci-env"]
+run = ["bosn", "run", "--task", "bar"]
+
+[lanes.python]
+modules = ["python", "ci-env"]
+tests = [
+  "tests/scripts/test_calendar_agenda.py",
+  "tests/test_clock.py",
+  "tests/test_glue.py",
+  "tests/test_hover.py",
+  "tests/test_search.py",
+  "tests/test_tasks_failures.py",
+  "tests/test_tasks_focus.py",
+  "tests/test_tasks_saves.py",
+]
+run = ["bosn", "run", "--task", "python"]
+
+# Screenshots the real binaries against a real daemon, so it reads all three crates.
+[lanes.rendering]
+modules = ["searchd", "popover", "bar", "ci-env"]
+run = ["bosn", "run", "--task", "rendering"]

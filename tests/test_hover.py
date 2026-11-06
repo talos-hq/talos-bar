@@ -1,7 +1,7 @@
 """Exercise the real QML with pointer events, including periodic glue refreshes."""
 
 import os
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from itertools import pairwise
 from pathlib import Path
 from typing import cast
@@ -20,6 +20,14 @@ from talos_bar import glue
 from talos_bar.app import QML_DIR, Bar, IconProvider
 
 UI = tuple[QGuiApplication, Bar, QQuickWindow]
+
+
+def wait_until(ready: Callable[[], bool], timeout_ms: int = 5000) -> None:
+    """Wait on the condition, not a fixed time: frames arrive late on a loaded machine."""
+    waited = 0
+    while not ready() and waited < timeout_ms:
+        QTest.qWait(20)
+        waited += 20
 
 
 @pytest.fixture
@@ -298,9 +306,10 @@ def test_all_cards_drop_from_the_bar_without_horizontal_motion(ui: UI, kind: str
         )
     assert bar._pool.waitForDone(1000)  # pyright: ignore[reportPrivateUsage]
     QTest.qWait(800 if kind == "tooltip" else 350)
+    bottom = number(popup, "anchorY")
+    wait_until(lambda: len(samples) >= 3 and abs(samples[-1][1] - bottom) < 0.1)
     assert len(samples) >= 3
     # The card starts behind the bar and emerges downward from its bottom.
-    bottom = number(popup, "anchorY")
     assert samples[0][1] < bottom - samples[0][2] * 0.3, samples
     assert abs(samples[-1][1] - bottom) < 0.1
     assert all(abs(s[0] - samples[-1][0]) < 0.1 for s in samples)

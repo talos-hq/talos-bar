@@ -1,7 +1,7 @@
 """Explicit editor clicks acquire keyboard focus without hover stealing it."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +17,14 @@ from PySide6.QtTest import QTest
 
 from talos_bar import glue
 from talos_bar.app import QML_DIR, Bar
+
+
+def wait_until(ready: Callable[[], bool], timeout_ms: int = 5000) -> None:
+    """Wait on the condition, not a fixed time: frames arrive late on a loaded machine."""
+    waited = 0
+    while not ready() and waited < timeout_ms:
+        QTest.qWait(20)
+        waited += 20
 
 
 @pytest.fixture
@@ -58,6 +66,9 @@ def popup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Bar
     QTest.qWait(300)
     text = window.findChild(QQuickItem, "tasksEditor")
     assert text is not None
+    # A click lands where the editor is now, so the drop has to have finished.
+    frame = next(i for i in window.findChildren(QQuickItem) if i.property("animating") is not None)
+    wait_until(lambda: not frame.property("animating"))
     yield bar, window, text
     bar.close()
     assert bar._pool.waitForDone(1000)  # pyright: ignore[reportPrivateUsage]
@@ -79,7 +90,7 @@ def test_clicking_hover_open_editor_pins_and_accepts_typing(
     # The text area can exceed the viewport: click near its visible top left.
     position = text.mapToScene(QPointF(24, 24)).toPoint()
     QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=position)
-    QTest.qWait(100)
+    wait_until(lambda: bool(bar.popupFocus))
     assert bar.popupFocus, "An explicit editor click must pin a hover-opened Tasks popup"
     assert bar.openId == "tasks"
     if QGuiApplication.platformName() != "wayland":
