@@ -1,3 +1,19 @@
+<div align="center">
+
+<a href="https://talosbot.ai"><img src="https://raw.githubusercontent.com/talos-hq/.github/main/profile/assets/banner-talos-bar.jpg" alt="talos-bar — Built to Endure" width="100%"></a>
+
+**A cross-platform desktop bar in PySide6 + QML that agents extend with plain Python.**
+
+<a href="https://talosbot.ai"><img src="https://img.shields.io/badge/talosbot.ai-C89B63?style=for-the-badge&labelColor=0B0D10" alt="talosbot.ai"></a>
+<img src="https://img.shields.io/badge/status-design%20phase-6B6F75?style=for-the-badge&labelColor=0B0D10" alt="Status: design phase">
+
+</div>
+
+```sh
+git clone https://github.com/talos-hq/talos-bar && cd talos-bar
+uv sync && uv run talos-bar     # NixOS: nix run .#talos-bar
+```
+
 # talos-bar
 
 A cross-platform desktop bar (Linux, Windows, macOS) for the Talos HQ setup.
