@@ -29,7 +29,7 @@ Item {
     readonly property int sideWidth: 380
     // Read by PopupFrame: the side panel's area (for input) and hover.
     readonly property var sideRect: details.visible ? Qt.rect(details.x, details.y + detailsMotion.y, details.width, details.height) : null
-    readonly property bool sideHovered: detailsHover.hovered
+    readonly property bool sideHovered: detailsHover.hovered || copyMenu.opened
 
     readonly property color link: Qt.rgba(41 / 255, 128 / 255, 185 / 255, 1).lighter(1.35)
     // Tomorrow's rows: semi-transparent yellow, so they lead without shouting.
@@ -56,7 +56,7 @@ Item {
     function fullDetails(row) {
         const parts = ["<b>" + escapeHtml(row.title) + "</b>", escapeHtml(row.time)];
         if (row.location !== "" && row.link_kind !== "Zoom") parts.push(escapeHtml(row.location));
-        if (row.link_kind === "Zoom") parts.push(anchor("zoom:", "Join Zoom meeting"));
+        if (row.link_kind === "Zoom") parts.push(anchor(row.join_url || row.url, "Join Zoom meeting"));
         const contacts = row.emails.map(a => anchor("mailto:" + a, a))
             .concat(row.phones.map(n => anchor("tel:" + n.replace(/[^\d+]/g, ""), n)));
         if (contacts.length > 0) parts.push(contacts.join("<br>"));
@@ -250,18 +250,78 @@ Item {
             anchors.margins: 12
             contentWidth: availableWidth
             clip: true
-            Label {
+            TextArea {
+                id: detailText
+                objectName: "agendaDetails"
+                readOnly: true
+                selectByMouse: true
+                persistentSelection: true
+                background: null
+                padding: 0
                 width: parent ? parent.width : 0
                 text: root.shownRow ? root.fullDetails(root.shownRow) : ""
-                textFormat: Text.StyledText
+                textFormat: TextEdit.RichText
                 wrapMode: Text.Wrap
                 color: Theme.text
-                linkColor: root.link
+                palette.link: root.link
                 onLinkActivated: function(href) {
-                    if (href === "zoom:") root.openMeeting(root.shownRow);
-                    else { Qt.openUrlExternally(href); bar.close(); }
+                    Qt.openUrlExternally(href);
+                    bar.close();
                 }
-                HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onPressedChanged: {
+                        if (!pressed) return;
+                        root.pinnedRow = root.shownRow;
+                        if (bar.openId === "agenda" && !bar.popupFocus) bar.click("agenda");
+                        detailText.forceActiveFocus();
+                    }
+                }
+                // Handle only right clicks so dragging and left-click links keep
+                // the text control's normal selection and activation behavior.
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onClicked: function(mouse) {
+                        root.pinnedRow = root.shownRow;
+                        if (bar.openId === "agenda" && !bar.popupFocus) bar.click("agenda");
+                        detailText.forceActiveFocus();
+                        copyMenu.link = detailText.linkAt(mouse.x, mouse.y);
+                        const point = detailText.mapToItem(details, mouse.x, mouse.y);
+                        copyMenu.popup(Math.max(0, Math.min(point.x, details.width - copyMenu.implicitWidth)),
+                                       Math.max(0, Math.min(point.y, details.height - copyMenu.implicitHeight)));
+                    }
+                }
+                Menu {
+                    id: copyMenu
+                    parent: details
+                    objectName: "agendaCopyMenu"
+                    property string link: ""
+                    MenuItem {
+                        objectName: "agendaCopyLink"
+                        text: copyMenu.link.startsWith("mailto:") ? "Copy email link" : "Copy link address"
+                        visible: copyMenu.link !== ""
+                        onTriggered: {
+                            // A separate invisible text control copies the URI
+                            // without disturbing the user's selected detail text.
+                            linkCopy.text = copyMenu.link;
+                            linkCopy.selectAll();
+                            linkCopy.copy();
+                        }
+                    }
+                    MenuItem {
+                        objectName: "agendaCopyText"
+                        text: "Copy"
+                        enabled: detailText.selectedText !== ""
+                        onTriggered: detailText.copy()
+                    }
+                    MenuItem {
+                        text: "Select all"
+                        onTriggered: detailText.selectAll()
+                    }
+                }
+                TextEdit { id: linkCopy; visible: false }
+                HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
             }
         }
     }
