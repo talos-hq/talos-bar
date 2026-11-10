@@ -69,6 +69,7 @@ modules = ["python", "ci-env"]
 tests = [
   "tests/scripts/test_calendar_agenda.py",
   "tests/test_clock.py",
+  "tests/test_agenda_copy.py",
   "tests/test_glue.py",
   "tests/test_hover.py",
   "tests/test_search.py",
