@@ -2,7 +2,7 @@
 ~/dev/nixos calendar-py unchanged).
 
 The script prints JSON: date, events, done, tomorrow, next, live, following,
-next_label, countdown, error. It reads the iCal file calendar-sync writes;
+next_label, countdown, next_hour_label, error. It reads the iCal file calendar-sync writes;
 without that file this glue adds nothing. TALOS_BAR_AGENDA_CMD, when set,
 runs an external command instead.
 """
@@ -54,6 +54,7 @@ class Agenda(TypedDict, total=False):
     following: Row | None
     next_label: str
     countdown: str
+    next_hour_label: str
     error: str
 
 
@@ -97,13 +98,14 @@ if ENABLED:
         a = _fetch(ctx)
         nxt, following = a.get("next"), a.get("following")
         # A bare clock time reads as "starting now"; say how far off it is.
+        next_hour = a.get("next_hour_label")
         if a.get("live"):
-            text = "In progress"
+            text = f"On call  │  {next_hour}" if next_hour else "In progress"
         elif nxt:
             text = f"Next {_hm(nxt['start'])} · {a.get('countdown', '')}".rstrip(" ·")
         else:
             text = "—"
-        if following:
+        if following and not next_hour:
             text += f"  │  Next {_hm(following['start'])}"
         out: Output = {"text": text, "icon": "view-calendar-agenda"}
         if a.get("live"):

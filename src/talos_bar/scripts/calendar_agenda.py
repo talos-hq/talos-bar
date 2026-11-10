@@ -113,6 +113,7 @@ class Feed:
     next_label: str
     countdown: str
     error: str
+    next_hour_label: str = ""
 
 
 def _is_zoom(host: str) -> bool:
@@ -295,6 +296,20 @@ def _rows_on(events: list[IcalEvent], day: date, now: datetime) -> list[Row]:
     return rows
 
 
+def _next_hour_label(events: list[IcalEvent], rows: list[Row], now: datetime) -> str:
+    local_day = now.astimezone().date()
+    cutoff = now.astimezone(UTC) + timedelta(hours=1)
+    if cutoff.astimezone().date() > local_day:
+        rows = rows + _rows_on(events, local_day + timedelta(days=1), now)
+    booking = min(
+        (row.start for row in rows if row.meeting and row.status is Status.UPCOMING),
+        default=float("inf"),
+    )
+    if booking <= cutoff.timestamp():
+        return f"Next 1h: booked at {_clock(datetime.fromtimestamp(booking).astimezone())}"
+    return "Next 1h: no booking"
+
+
 def today_agenda(events: list[IcalEvent], now: datetime) -> Feed:
     """Build today's feed at `now`, which must be timezone-aware."""
     day = now.astimezone().date()
@@ -337,6 +352,11 @@ def today_agenda(events: list[IcalEvent], now: datetime) -> Feed:
         next_label=label,
         countdown=countdown,
         error="",
+        next_hour_label=(
+            _next_hour_label(live, ahead, now)
+            if chosen is not None and chosen.meeting and chosen.status is Status.CURRENT
+            else ""
+        ),
     )
 
 
