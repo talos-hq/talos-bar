@@ -117,13 +117,16 @@ pub fn tasks_cell(list: Option<&Result<TaskList, String>>) -> String {
 }
 
 /// The agenda cell on the bar: the next meeting's time and title, as the Qt bar's agenda item
-/// says it (`Now · title` while one is in progress). `None` when there is nothing to show (no
+/// says it, with the next hour shown during a call. `None` when there is nothing to show (no
 /// meeting left today, the script not answered yet, or failed: the panel says why).
 pub fn agenda_cell(agenda: Option<&Result<Agenda, String>>) -> Option<String> {
     let Some(Ok(agenda)) = agenda else { return None };
     let next = agenda.next.as_ref()?;
     if agenda.live || next.status == "current" {
-        return Some(format!("Now · {}", next.title));
+        if agenda.next_hour_label.is_empty() {
+            return Some(format!("Now · {}", next.title));
+        }
+        return Some(format!("On call · {}", agenda.next_hour_label));
     }
     let when = if agenda.next_label.is_empty() { next.time.split(" – ").next().unwrap_or_default() } else { &agenda.next_label };
     Some(format!("{when} · {}", next.title).trim_start_matches(" · ").to_owned())
@@ -377,6 +380,7 @@ pub struct Agenda {
     pub following: Option<Meeting>,
     pub next_label: String,
     pub countdown: String,
+    pub next_hour_label: String,
     pub error: String,
 }
 
@@ -455,6 +459,9 @@ pub fn agenda_lines(agenda: &Agenda, max_rows: usize, now: f64, selected: Option
         }));
         lines.push(text(if agenda.live { title.to_owned() } else { format!("Next up: {title}") }));
         lines.push(text(next.time.clone()));
+        if !agenda.next_hour_label.is_empty() {
+            lines.push(text(agenda.next_hour_label.clone()));
+        }
         if joinable(agenda, now) {
             lines.push(Line::Buttons(vec![("Join Zoom meeting now".to_owned(), Act::Join(Box::new(next.clone())))]));
         }
@@ -875,6 +882,10 @@ mod tests {
         assert_eq!(agenda_cell(next.as_ref()).as_deref(), Some("10:00 AM · Sync"));
         let live = parse(r#"{"live": true, "next": {"title": "Sync", "status": "current"}}"#);
         assert_eq!(agenda_cell(live.as_ref()).as_deref(), Some("Now · Sync"));
+        let booked = parse(r#"{"live": true, "next": {"title": "Client call"}, "next_hour_label": "Next 1h: booked at 12:30 PM"}"#);
+        assert_eq!(agenda_cell(booked.as_ref()).as_deref(), Some("On call · Next 1h: booked at 12:30 PM"));
+        let free = parse(r#"{"live": true, "next": {"title": "Client call"}, "next_hour_label": "Next 1h: no booking"}"#);
+        assert_eq!(agenda_cell(free.as_ref()).as_deref(), Some("On call · Next 1h: no booking"));
         let unlabelled = parse(r#"{"next": {"title": "Sync", "time": "9:30 AM – 10:00 AM"}}"#);
         assert_eq!(agenda_cell(unlabelled.as_ref()).as_deref(), Some("9:30 AM · Sync"));
         assert_eq!(agenda_cell(parse("{}").as_ref()), None);

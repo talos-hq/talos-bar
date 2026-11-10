@@ -114,6 +114,27 @@ class AgendaTests(unittest.TestCase):
         assert feed.following is not None  # noqa: S101 -- narrows for the type checker
         self.assertEqual(feed.following.title, "One o'clock")
 
+    def test_live_call_reports_booking_starts_in_the_next_hour(self) -> None:
+        call = "DTSTART:20261022T183000Z\nDTEND:20261022T193000Z\nSUMMARY:Client call" + ZOOM
+        for start, label in (
+            ("20261022T193000Z", "Next 1h: booked at 12:30 PM"),
+            ("20261022T200000Z", "Next 1h: booked at 1:00 PM"),
+            ("20261022T200001Z", "Next 1h: no booking"),
+            ("20261022T201500Z", "Next 1h: no booking"),
+        ):
+            with self.subTest(start=start):
+                booking = f"DTSTART:{start}\nDTEND:20261022T210000Z\nSUMMARY:Booking" + ZOOM
+                feed = today_agenda(ics(call, booking), at(19))
+                self.assertTrue(feed.live)
+                self.assertEqual(feed.next_hour_label, label)
+        self.assertEqual(today_agenda(ics(call), at(19)).next_hour_label, "Next 1h: no booking")
+
+    def test_live_call_checks_bookings_across_midnight(self) -> None:
+        call = "DTSTART:20261023T063000Z\nDTEND:20261023T070000Z\nSUMMARY:Late call" + ZOOM
+        booking = "DTSTART:20261023T071500Z\nDTEND:20261023T074500Z\nSUMMARY:Booking" + ZOOM
+        now = datetime(2026, 10, 23, 6, 45, tzinfo=UTC)
+        self.assertEqual(today_agenda(ics(call, booking), now).next_hour_label, "Next 1h: booked at 12:15 AM")
+
     def test_following_needs_a_live_meeting_and_a_near_start(self) -> None:
         self.assertIsNone(today_agenda(ics(*DAY), at(18, 30)).following)  # nothing live
         far = ics(
