@@ -14,6 +14,8 @@ Item {
     implicitHeight: list.implicitHeight
     readonly property var agenda: parent ? parent.content : ({})
     readonly property var events: agenda.events || []
+    readonly property int nextBookingIndex: agenda.live
+        ? events.findIndex(row => row.status === "upcoming" && row.meeting) : -1
     readonly property var done: agenda.done || []
     readonly property var tomorrow: agenda.tomorrow || []
     readonly property bool empty: !agenda.next && events.length === 0 && done.length === 0 && tomorrow.length === 0
@@ -103,9 +105,9 @@ Item {
             }
         }
 
-        // Headliner: the meeting the tab shows, with one big Join button.
+        // Before a call starts, show its countdown and timed Join button.
         Rectangle {
-            visible: !!root.agenda.next
+            visible: !!root.agenda.next && !root.agenda.live
             Layout.fillWidth: true
             implicitHeight: headliner.implicitHeight + 24
             radius: 8
@@ -118,24 +120,14 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 12
                 spacing: 6
-                RowLayout {
-                    spacing: 6
-                    Rectangle {
-                        visible: root.agenda.live === true
-                        Layout.preferredWidth: 8
-                        Layout.preferredHeight: 8
-                        radius: 4
-                        color: Theme.negative
-                    }
-                    Text_ {
-                        text: root.agenda.live ? "In progress" : (root.agenda.next_label || "") + " · " + (root.agenda.countdown || "")
-                        font.bold: true
-                        color: Theme.highlight
-                    }
+                Text_ {
+                    text: (root.agenda.next_label || "") + " · " + (root.agenda.countdown || "")
+                    font.bold: true
+                    color: Theme.highlight
                 }
                 Text_ {
                     Layout.fillWidth: true
-                    text: root.agenda.next && !root.agenda.live ? "Next up: " + root.title : root.title
+                    text: "Next up: " + root.title
                     wrapMode: Text.WordWrap
                     maximumLineCount: 2
                     elide: Text.ElideRight
@@ -331,15 +323,19 @@ Item {
         ItemDelegate {
             id: meeting
             required property var modelData
+            required property int index
+            readonly property bool current: modelData.status === "current"
+            readonly property bool nextBooking: modelData.status === "upcoming"
+                && !modelData.tomorrow && index === root.nextBookingIndex
             readonly property color accent: modelData.tomorrow ? root.tomorrowColor
-                : modelData.status === "current" ? Theme.highlight : Theme.text
+                : current || nextBooking ? Theme.highlight : Theme.text
             width: parent ? parent.width : 0
             implicitHeight: details.implicitHeight + 18
             opacity: modelData.status === "past" ? 0.5 : 1.0
             onClicked: root.pinnedRow = modelData
             onHoveredChanged: if (hovered) root.focusRow = modelData
             background: Rectangle {
-                color: meeting.modelData === root.shownRow || meeting.modelData.status === "current"
+                color: meeting.modelData === root.shownRow || meeting.current
                     ? Qt.alpha(Theme.highlight, 0.18)
                     : meeting.hovered ? Qt.alpha(Theme.highlight, 0.10) : "transparent"
             }
@@ -348,7 +344,7 @@ Item {
                 spacing: 4
                 Text_ {
                     Layout.fillWidth: true
-                    text: (meeting.modelData.status === "current" ? "NOW · " : "") + meeting.modelData.time
+                    text: (meeting.current ? "NOW · " : meeting.nextBooking ? "NEXT · " : "") + meeting.modelData.time
                     font.bold: true
                     color: meeting.accent
                 }
@@ -377,7 +373,8 @@ Item {
                     Text_ {
                         Layout.fillWidth: true
                         // Drop the query string: it can carry the meeting passcode.
-                        text: meeting.modelData.url.replace(/^https?:\/\//, "").split("?")[0]
+                        text: meeting.current ? "Join Zoom meeting now"
+                            : meeting.modelData.url.replace(/^https?:\/\//, "").split("?")[0]
                         elide: Text.ElideRight
                         color: root.link
                         font.underline: true
