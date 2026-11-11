@@ -83,3 +83,53 @@ Window {
     import shiboken6
 
     shiboken6.delete(engine)
+
+
+def test_live_agenda_shows_current_and_next_as_distinct_rows() -> None:
+    app = cast("QGuiApplication", QGuiApplication.instance() or QGuiApplication([]))
+    engine = QQmlApplicationEngine()
+    engine.loadData(
+        b"""import QtQuick
+import "../glue/builtin"
+Window {
+    width: 440; height: 600; visible: true
+    Item {
+        width: parent.width; height: parent.height
+        property real roomRight: 0
+        property real roomLeft: 0
+        property var current: row("Current call", "4:00 PM", "current", true)
+        property var content: ({
+            live: true, next: current,
+            events: [current, row("Focus block", "4:45 PM", "upcoming", false),
+                     row("Next call", "5:00 PM", "upcoming", true),
+                     row("Later call", "6:00 PM", "upcoming", true)]
+        })
+        function row(title, time, status, meeting) {
+            return {title, time, status, meeting, tomorrow: false, link_kind: meeting ? "Zoom" : "",
+                    url: "https://example.zoom.us/j/12345678901", join_url: "", location: "",
+                    emails: meeting ? ["guest@example.com"] : [], phones: [], details: ""};
+        }
+        Agenda { width: parent.width; height: implicitHeight }
+    }
+}""",
+        QUrl.fromLocalFile(str(QML_DIR / "AgendaLiveTest.qml")),
+    )
+    assert engine.rootObjects()
+    window = cast("QQuickWindow", engine.rootObjects()[0])
+    assert QTest.qWaitForWindowExposed(window)
+
+    def labels(item: QQuickItem) -> list[str]:
+        if not item.isVisible():
+            return []
+        label = cast("object", item.property("text"))
+        own = [label] if isinstance(label, str) else []
+        return own + [value for child in item.childItems() for value in labels(child)]
+
+    visible = labels(window.contentItem())
+    assert visible.count("Current call") == 1
+    assert "NOW · 4:00 PM" in visible
+    assert [label for label in visible if label.startswith("NEXT · ")] == ["NEXT · 5:00 PM"]
+    assert visible.count("Join Zoom meeting now") == 1
+    assert "guest@example.com" in visible
+    window.close()
+    app.processEvents()

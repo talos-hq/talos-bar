@@ -394,12 +394,12 @@ pub const JOIN_LEAD_SECONDS: f64 = 5.0 * 60.0;
 
 /// A meeting row as Agenda.qml's delegate words it: "NOW · " for the one in progress. A click
 /// pins it (`pinnedRow`), so the selected row is highlighted too.
-fn meeting_row(row: &Meeting, selected: Option<&Meeting>) -> Line {
+fn meeting_row(row: &Meeting, selected: Option<&Meeting>, next: bool) -> Line {
     let current = row.status == "current";
-    let now = if current { "NOW · " } else { "" };
+    let label = if current { "NOW · " } else if next { "NEXT · " } else { "" };
     let shown = selected == Some(row);
     Line::Row {
-        text: format!("{now}{}  {}", row.time, row.title),
+        text: format!("{label}{}  {}", row.time, row.title),
         current: current || shown,
         act: Some(Act::Select(Box::new(row.clone()))),
     }
@@ -448,20 +448,13 @@ pub fn agenda_lines(agenda: &Agenda, max_rows: usize, now: f64, selected: Option
             ("Open calendar".to_owned(), Act::OpenCalendar),
         ]),
     ];
-    // Agenda.qml's `title`: the next meeting's, else the countdown sentence.
-    let title = agenda.next.as_ref().map_or(agenda.countdown.as_str(), |next| next.title.as_str());
-    if let Some(next) = &agenda.next {
+    if let Some(next) = &agenda.next
+        && !agenda.live
+    {
         lines.push(Line::Separator);
-        lines.push(text(if agenda.live {
-            "In progress".to_owned()
-        } else {
-            format!("{} · {}", agenda.next_label, agenda.countdown)
-        }));
-        lines.push(text(if agenda.live { title.to_owned() } else { format!("Next up: {title}") }));
+        lines.push(text(format!("{} · {}", agenda.next_label, agenda.countdown)));
+        lines.push(text(format!("Next up: {}", next.title)));
         lines.push(text(next.time.clone()));
-        if !agenda.next_hour_label.is_empty() {
-            lines.push(text(agenda.next_hour_label.clone()));
-        }
         if joinable(agenda, now) {
             lines.push(Line::Buttons(vec![("Join Zoom meeting now".to_owned(), Act::Join(Box::new(next.clone())))]));
         }
@@ -470,10 +463,23 @@ pub fn agenda_lines(agenda: &Agenda, max_rows: usize, now: f64, selected: Option
         lines.push(Line::Separator);
         lines.push(text(if agenda.error.is_empty() { "No meetings today" } else { &agenda.error }));
     }
+    if agenda.live && !agenda.next_hour_label.is_empty() {
+        lines.push(text(agenda.next_hour_label.clone()));
+    }
+    let next_booking = if agenda.live {
+        agenda.events.iter().position(|row| row.status == "upcoming" && row.meeting)
+    } else {
+        None
+    };
     let mut budget = max_rows;
-    let mut rows = |lines: &mut Vec<Line>, list: &[Meeting]| {
+    let mut rows = |lines: &mut Vec<Line>, list: &[Meeting], next: Option<usize>| {
         let shown = list.len().min(budget);
-        lines.extend(list[..shown].iter().map(|row| meeting_row(row, selected)));
+        for (index, row) in list[..shown].iter().enumerate() {
+            lines.push(meeting_row(row, selected, next == Some(index)));
+            if row.status == "current" && row.zoom() {
+                lines.push(Line::Buttons(vec![("Join Zoom meeting now".to_owned(), Act::Join(Box::new(row.clone())))]));
+            }
+        }
         budget -= shown;
         if shown < list.len() {
             lines.push(text(format!("… {} more", list.len() - shown)));
@@ -482,7 +488,7 @@ pub fn agenda_lines(agenda: &Agenda, max_rows: usize, now: f64, selected: Option
     if !agenda.tomorrow.is_empty() {
         lines.push(Line::Separator);
         lines.push(text("Tomorrow"));
-        rows(&mut lines, &agenda.tomorrow);
+        rows(&mut lines, &agenda.tomorrow, None);
         if !agenda.events.is_empty() || !agenda.done.is_empty() {
             lines.push(text("Today"));
         }
@@ -491,13 +497,13 @@ pub fn agenda_lines(agenda: &Agenda, max_rows: usize, now: f64, selected: Option
         if agenda.tomorrow.is_empty() {
             lines.push(Line::Separator);
         }
-        rows(&mut lines, &agenda.events);
+        rows(&mut lines, &agenda.events, next_booking);
     }
     if !agenda.done.is_empty() {
         lines.push(text(format!("Done · {}", agenda.done.len())));
         // Agenda.qml opens the done section by default only when nothing is ahead.
         if agenda.events.is_empty() {
-            rows(&mut lines, &agenda.done);
+            rows(&mut lines, &agenda.done, None);
         }
     }
     let empty = agenda.next.is_none() && agenda.events.is_empty() && agenda.done.is_empty() && agenda.tomorrow.is_empty();
@@ -708,23 +714,23 @@ mod tests {
         let lines = agenda_lines(&agenda, 10, 0.0, None);
         assert_eq!(lines[0], Line::Heading("Today's meetings".into()));
         assert_eq!(lines[1], text("Monday, November 2"));
-        assert!(lines.contains(&text("In progress")));
-        assert!(lines.contains(&text("Standup")), "live: the title without 'Next up'");
+        assert!(!lines.contains(&text("In progress")));
+        assert!(!lines.contains(&text("Standup")), "the live meeting has no duplicate headliner");
         let row = |want: &str| lines.iter().find_map(|l| match l {
             Line::Row { text, current, act } if text == want => Some((*current, act.clone())),
             _ => None,
         });
         assert_eq!(row("NOW · 9:00 AM – 9:15 AM  Standup").map(|r| r.0), Some(true));
-        let (current, act) = row("10:00 AM – 11:00 AM  Meeting with David").expect("row");
+        let (current, act) = row("NEXT · 10:00 AM – 11:00 AM  Meeting with David").expect("row");
         assert!(!current);
         assert_eq!(act, Some(Act::Select(Box::new(agenda.events[1].clone()))), "a click pins the row");
         assert_eq!(lines[2], Line::Buttons(vec![
             ("New Zoom Meeting".into(), Act::Open("https://zoom.us/start/videomeeting".into())),
             ("Open calendar".into(), Act::OpenCalendar),
         ]));
-        // Live Zoom meeting: the headliner's Join button, after the next-up time.
+        // The active row keeps its one-click Join action.
         let join = lines.iter().position(|l| matches!(l, Line::Buttons(b) if b[0].0 == "Join Zoom meeting now")).expect("join");
-        assert_eq!(lines[join - 1], text("9:00 AM – 9:15 AM"));
+        assert!(matches!(&lines[join - 1], Line::Row { text, .. } if text.starts_with("NOW · ")));
         // Something is still ahead, so the done section is collapsed to its header.
         assert!(lines.contains(&text("Done · 1")));
         assert!(!lines.iter().any(|l| matches!(l, Line::Row { text, .. } if text.contains("Gym"))));
