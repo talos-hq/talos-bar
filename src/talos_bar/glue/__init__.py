@@ -30,6 +30,8 @@ class Rich(TypedDict, total=False):
     subtext: str  # a smaller second line under text (the clock's date)
     icon: str  # freedesktop icon name, e.g. "view-calendar-agenda"
     dot: str  # a small status dot after the icon, as a colour ("#e5322d")
+    badge: str  # a short pill after the text ("$Paid"), drawn in badge_color
+    badge_color: str
     tooltip: str
 
 
@@ -180,6 +182,21 @@ def forget_scripts() -> None:
             path: object = getattr(module, "__file__", None)
             if isinstance(path, str) and Path(path).parent == SCRIPTS:
                 del sys.modules[name]
+
+
+_poke: Callable[[str], None] | None = None
+
+
+def set_poke(fn: Callable[[str], None] | None) -> None:
+    """Installed by the app: refresh an item now. Safe to call from any thread."""
+    global _poke
+    _poke = fn
+
+
+def poke(id: str) -> None:
+    """Refresh item ``id`` now instead of at its next tick (no-op without the app)."""
+    if _poke is not None:
+        _poke(id)
 
 
 def id_of(fn: object) -> int:

@@ -6,18 +6,21 @@ Prints one JSON `Feed` for the panel widget, which reruns this every 30 s.
 import html
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from booking_merge import Booking, booking_title, load_bookings, match
 from calendar_ical import IcalEvent, parse_events
 
 SOURCE = Path.home() / ".local/share/calendar-sync/google.ics"
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
 # Google event types that describe the user's time rather than a meeting.
 BLOCK_EVENT_TYPES = frozenset({"focusTime", "outOfOffice", "workingLocation"})
+# eventType of a booking the server knows about but the synced calendar lacks.
+BOOKING_EVENT_TYPE = "talosBooking"
 HOUR_MINUTES = 60
 # The TLD must be lowercase: descriptions often run an address straight into
 # the next label ("x@site.com.auWebsite: ..."), and that cuts it off there.
@@ -92,6 +95,10 @@ class Row:
     phones: list[str]
     # Listed under Tomorrow; the widget colours these apart from today's.
     tomorrow: bool
+    # The matching booking's payment: "$Paid", "unpaid", "waived", ... ("" for none),
+    # and its state, "paid" | "unpaid" | "other" ("" for no booking).
+    payment_label: str = ""
+    payment_state: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,7 +234,7 @@ def _row(event: IcalEvent, day: date, now: datetime) -> Row | None:
     link = event_link(event)
     meeting = (
         not all_day
-        and link.kind is LinkKind.ZOOM
+        and (link.kind is LinkKind.ZOOM or event.event_type == BOOKING_EVENT_TYPE)
         and not event.transparent
         and event.event_type not in BLOCK_EVENT_TYPES
     )
@@ -375,12 +382,83 @@ def _failure(countdown: str, error: str) -> Feed:
     )
 
 
+def _event_start(event: IcalEvent) -> float | None:
+    return _local(event.start).timestamp() if isinstance(event.start, datetime) else None
+
+
+def with_bookings(events: list[IcalEvent], bookings: list[Booking]) -> list[IcalEvent]:
+    """Add an event for each booking no calendar event matches: they are real meetings."""
+    known = [
+        found
+        for event in events
+        if not event.cancelled and (start := _event_start(event)) is not None
+        if (found := match(bookings, start, contacts(event)[0], event.summary)) is not None
+    ]
+    extra = [
+        IcalEvent(
+            summary=booking_title(booking),
+            start=datetime.fromtimestamp(booking.start, UTC),
+            end=datetime.fromtimestamp(booking.end, UTC),
+            duration=None,
+            cancelled=False,
+            location="",
+            description=booking.email,
+            url="",
+            transparent=False,
+            event_type=BOOKING_EVENT_TYPE,
+        )
+        for booking in bookings
+        if booking not in known
+    ]
+    return events + extra
+
+
+def _annotated(row: Row, bookings: list[Booking]) -> Row:
+    if row.all_day:
+        return row
+    found = match(bookings, row.start, row.emails, row.title)
+    if found is None:
+        return row
+    return replace(row, payment_label=found.label, payment_state=found.state)
+
+
+def annotate(feed: Feed, bookings: list[Booking]) -> Feed:
+    """Give every row that matches a booking its payment label and state."""
+    if not bookings:
+        return feed
+
+    def one(row: Row | None) -> Row | None:
+        return None if row is None else _annotated(row, bookings)
+
+    def many(rows: list[Row]) -> list[Row]:
+        return [_annotated(row, bookings) for row in rows]
+
+    return replace(
+        feed,
+        events=many(feed.events),
+        done=many(feed.done),
+        tomorrow=many(feed.tomorrow),
+        next=one(feed.next),
+        following=one(feed.following),
+    )
+
+
+def agenda_with_bookings(events: list[IcalEvent], bookings: list[Booking], now: datetime) -> Feed:
+    """today_agenda over the calendar plus missing bookings, annotated with payments."""
+    return annotate(today_agenda(with_bookings(events, bookings), now), bookings)
+
+
 def main() -> None:
     """Print the feed for the current moment."""
+    bookings = load_bookings()
     try:
-        feed = today_agenda(parse_events(SOURCE.read_bytes()), datetime.now(UTC))
+        feed = agenda_with_bookings(parse_events(SOURCE.read_bytes()), bookings, datetime.now(UTC))
     except FileNotFoundError:
-        feed = _failure("Waiting for sync", "Waiting for the first calendar sync.")
+        feed = (
+            agenda_with_bookings([], bookings, datetime.now(UTC))
+            if bookings
+            else _failure("Waiting for sync", "Waiting for the first calendar sync.")
+        )
     except (OSError, ValueError):  # ParseError is a ValueError
         # Do not log calendar contents, private meeting URLs, or parser exceptions.
         feed = _failure("Calendar unavailable", "Calendar could not be read. The sync will retry.")

@@ -54,6 +54,8 @@ def _blank_view(it: glue.Item) -> dict[str, object]:
         "subtext": "",
         "icon": "",
         "dot": "",
+        "badge": "",
+        "badgeColor": "",
         "tooltip": "",
         "error": False,
         "plain": it.plain,
@@ -136,6 +138,8 @@ class Bar(QObject):
     popupChanged = Signal()
     result = Signal(str, str, object, bool)
     actionFinished = Signal(str, str, str, bool, str)
+    # glue.poke(id) from any thread; queued onto the GUI thread.
+    poked = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -157,6 +161,8 @@ class Bar(QObject):
         self._focus = False
         self._popup: dict[str, object] = {}
         self.result.connect(self._on_result)
+        self.poked.connect(self._poke)
+        glue.set_poke(self.poked.emit)
         self._watch = QFileSystemWatcher(self)
         self._watch.directoryChanged.connect(self._changed)
         self._watch.fileChanged.connect(self._changed)
@@ -234,6 +240,12 @@ class Bar(QObject):
         self._timers[it.id] = t
         self._tick(it)
 
+    @Slot(str)
+    def _poke(self, item_id: str) -> None:
+        it = self._items.get(item_id)
+        if it is not None:
+            self._tick(it)
+
     def _tick(self, it: glue.Item) -> None:
         if it.refresh:
             self._pool.start(_Job(self, it.id, "item", it.refresh))
@@ -264,6 +276,8 @@ class Bar(QObject):
             v["subtext"] = rich.get("subtext", "")
             v["icon"] = rich.get("icon", "")
             v["dot"] = rich.get("dot", "")
+            v["badge"] = rich.get("badge", "")
+            v["badgeColor"] = rich.get("badge_color", "")
             v["tooltip"] = rich.get("tooltip", "")
         elif not error:
             v["text"] = str(out)

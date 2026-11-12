@@ -71,6 +71,29 @@ Item {
         textFormat: Text.PlainText
     }
 
+    // A booking's payment pill: "$Paid" green, "unpaid" yellow, nothing otherwise.
+    component PayPill: Rectangle {
+        id: pill
+        property var row: null
+        readonly property string state_: row ? (row.payment_state || "") : ""
+        visible: state_ === "paid" || state_ === "unpaid"
+        objectName: "agendaPayPill"
+        implicitWidth: pillText.implicitWidth + 12
+        implicitHeight: pillText.implicitHeight + 4
+        Layout.alignment: Qt.AlignTop
+        radius: height / 2
+        color: state_ === "paid" ? "#2ecc71" : "#f5c518"
+        Label {
+            id: pillText
+            anchors.centerIn: parent
+            text: pill.row ? (pill.row.payment_label || "") : ""
+            textFormat: Text.PlainText
+            color: "#111111"
+            font.bold: true
+            font.pixelSize: 11
+        }
+    }
+
     // ── The list ──
     ColumnLayout {
         id: list
@@ -125,14 +148,19 @@ Item {
                     font.bold: true
                     color: Theme.highlight
                 }
-                Text_ {
+                RowLayout {
                     Layout.fillWidth: true
-                    text: "Next up: " + root.title
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    font.pixelSize: 20
-                    font.bold: true
+                    spacing: 6
+                    Text_ {
+                        Layout.fillWidth: true
+                        text: "Next up: " + root.title
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        font.pixelSize: 20
+                        font.bold: true
+                    }
+                    PayPill { row: root.agenda.next || null }
                 }
                 Text_ { text: root.agenda.next ? root.agenda.next.time : ""; opacity: 0.75 }
                 Button {
@@ -348,14 +376,19 @@ Item {
                     font.bold: true
                     color: meeting.accent
                 }
-                Text_ {
+                RowLayout {
                     Layout.fillWidth: true
-                    text: meeting.modelData.title
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    font.pixelSize: 14
-                    color: meeting.modelData.tomorrow ? root.tomorrowColor : Theme.text
+                    spacing: 6
+                    Text_ {
+                        Layout.fillWidth: true
+                        text: meeting.modelData.title
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        font.pixelSize: 14
+                        color: meeting.modelData.tomorrow ? root.tomorrowColor : Theme.text
+                    }
+                    PayPill { row: meeting.modelData }
                 }
                 Text_ {
                     visible: meeting.modelData.link_kind !== "Zoom"

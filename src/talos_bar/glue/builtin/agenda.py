@@ -2,7 +2,9 @@
 ~/dev/nixos calendar-py unchanged).
 
 The script prints JSON: date, events, done, tomorrow, next, live, following,
-next_label, countdown, next_hour_label, error. It reads the iCal file calendar-sync writes;
+next_label, countdown, next_hour_label, error. Rows carry payment_label and payment_state from the booking
+server's live feed (talos_bar.booking_payments), which pokes this item as soon as a
+snapshot arrives instead of waiting for the next tick. It reads the iCal file calendar-sync writes;
 without that file this glue adds nothing. TALOS_BAR_AGENDA_CMD, when set,
 runs an external command instead.
 """
@@ -15,7 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict, cast
 
-from talos_bar.glue import Context, Output, action, every, item, popup, run, run_script
+from talos_bar import booking_payments
+from talos_bar.glue import Context, Output, action, every, item, poke, popup, run, run_script
 
 CMD = os.environ.get("TALOS_BAR_AGENDA_CMD", "")
 # calendar_agenda.SOURCE, without importing the script just to decide.
@@ -40,6 +43,20 @@ class Row(TypedDict):
     emails: list[str]
     phones: list[str]
     tomorrow: bool
+    payment_label: str
+    payment_state: str
+
+
+# The pill colours for a booking's payment state; other states get no pill.
+BADGE_COLORS = {"paid": "#2ecc71", "unpaid": "#f5c518"}
+
+
+def badge(row: Row | None) -> tuple[str, str]:
+    """``(text, colour)`` of a row's payment pill, or ``("", "")``."""
+    if row is None:
+        return "", ""
+    color = BADGE_COLORS.get(row.get("payment_state", ""), "")
+    return (row.get("payment_label", "") or "", color) if color else ("", "")
 
 
 class Agenda(TypedDict, total=False):
@@ -91,6 +108,8 @@ def _hm(epoch: float) -> str:
 
 
 if ENABLED:
+    # A new bookings snapshot is in the cache: rerun the agenda now.
+    booking_payments.ensure_started("agenda", lambda _snapshot: poke("agenda"))
 
     @item("agenda", label="Calendar", order=10)
     @every(seconds=30)
@@ -108,6 +127,9 @@ if ENABLED:
         if following and not next_hour:
             text += f"  │  Next {_hm(following['start'])}"
         out: Output = {"text": text, "icon": "view-calendar-agenda"}
+        pill, color = badge(nxt)
+        if pill:
+            out["badge"], out["badge_color"] = pill, color
         if a.get("live"):
             out["dot"] = "#e5322d"
         return out
