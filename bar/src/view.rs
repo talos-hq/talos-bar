@@ -181,6 +181,8 @@ pub struct Bar {
     pub laid_out: Option<(usize, usize)>,
     /// The agenda cell's text as last drawn (after truncation), if shown.
     pub agenda_shown: Option<String>,
+    /// The bookings cache's mtime the agenda last ran against.
+    bookings_seen: Option<std::time::SystemTime>,
     /// `[bar] width = "fit"`: the dock length last asked for.
     fit_asked: Option<f32>,
     /// The widest surface seen: the screen's edge, since a fit bar starts full.
@@ -306,6 +308,7 @@ impl Bar {
             now: None,
             laid_out: None,
             agenda_shown: None,
+            bookings_seen: None,
             fit_asked: None,
             edge_seen: 0.0,
             editor: Editor::Off,
@@ -582,6 +585,12 @@ impl App for Bar {
         self.poll_edit();
         // The cell's count stays fresh without the panel; the panel refreshes on open.
         self.feeds.tasks.refresh_if_older(Duration::from_secs(self.config.panels.refresh_secs));
+        let bookings = crate::feeds::bookings_cache_mtime();
+        if bookings != self.bookings_seen {
+            // A new payments snapshot: rerun the agenda now rather than at the next tick.
+            self.bookings_seen = bookings;
+            self.feeds.agenda.refresh();
+        }
         self.feeds.agenda.refresh_if_older(AGENDA_REFRESH);
         let agenda = panel::agenda_cell(self.feeds.agenda.get().0.as_ref());
         let fit = self.config.bar.fit;

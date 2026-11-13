@@ -112,6 +112,16 @@ pub fn agenda_command() -> Vec<String> {
     command(cmd.as_deref(), &py, &scripts_dir().join("calendar_agenda.py"), &[])
 }
 
+/// When the booking payments cache (`talos_bar.booking_payments`) last changed, if it exists:
+/// the agenda reruns as soon as this moves, not at its next tick.
+pub fn bookings_cache_mtime() -> Option<std::time::SystemTime> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))?;
+    std::fs::metadata(base.join("talos-bar/bookings.json")).and_then(|m| m.modified()).ok()
+}
+
 /// Run `argv` and return its stdout, failing on a non-zero exit, a spawn error or `timeout`.
 /// The scripts import their siblings, so they run from the scripts directory.
 pub fn run(argv: &[String], timeout: Duration) -> Result<String, String> {

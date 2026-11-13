@@ -79,6 +79,22 @@ Item {
                 font.pixelSize: 11
             }
         }
+        // A short status pill after the text (the next booking's "$Paid" / "unpaid").
+        Rectangle {
+            visible: !!tab.model.badge
+            Layout.preferredWidth: badgeLabel.implicitWidth + 10
+            Layout.preferredHeight: badgeLabel.implicitHeight + 2
+            radius: height / 2
+            color: tab.model.badgeColor || Theme.highlight
+            Label {
+                id: badgeLabel
+                anchors.centerIn: parent
+                text: tab.model.badge || ""
+                color: "#111111"
+                font.pixelSize: 10
+                font.bold: true
+            }
+        }
     }
 
     HoverHandler { id: hover; cursorShape: tab.model.expandable ? Qt.PointingHandCursor : Qt.ArrowCursor }

@@ -67,7 +67,9 @@ run = ["bosn", "run", "--task", "bar"]
 [lanes.python]
 modules = ["python", "ci-env"]
 tests = [
+  "tests/scripts/test_booking_merge.py",
   "tests/scripts/test_calendar_agenda.py",
+  "tests/test_booking_payments.py",
   "tests/test_clock.py",
   "tests/test_agenda_copy.py",
   "tests/test_glue.py",

@@ -122,14 +122,15 @@ pub fn tasks_cell(list: Option<&Result<TaskList, String>>) -> String {
 pub fn agenda_cell(agenda: Option<&Result<Agenda, String>>) -> Option<String> {
     let Some(Ok(agenda)) = agenda else { return None };
     let next = agenda.next.as_ref()?;
+    let pill = next.payment_badge().map_or_else(String::new, |label| format!(" [{label}]"));
     if agenda.live || next.status == "current" {
         if agenda.next_hour_label.is_empty() {
-            return Some(format!("Now · {}", next.title));
+            return Some(format!("Now · {}{pill}", next.title));
         }
         return Some(format!("On call · {}", agenda.next_hour_label));
     }
     let when = if agenda.next_label.is_empty() { next.time.split(" – ").next().unwrap_or_default() } else { &agenda.next_label };
-    Some(format!("{when} · {}", next.title).trim_start_matches(" · ").to_owned())
+    Some(format!("{when} · {}{pill}", next.title).trim_start_matches(" · ").to_owned())
 }
 
 /// Tasks panel: Tasks.qml's header and sync note, then the glue's `_tooltip` rows. The glue's
@@ -359,11 +360,23 @@ pub struct Meeting {
     pub emails: Vec<String>,
     pub phones: Vec<String>,
     pub tomorrow: bool,
+    /// The matching booking's payment ("$Paid", "unpaid", "waived", ...; "" for none).
+    pub payment_label: String,
+    /// "paid" | "unpaid" | "other", or "" with no booking.
+    pub payment_state: String,
 }
 
 impl Meeting {
     fn zoom(&self) -> bool {
         self.link_kind == "Zoom"
+    }
+
+    /// The payment pill's text, shown only for a paid or unpaid booking (Agenda.qml's PayPill).
+    pub fn payment_badge(&self) -> Option<&str> {
+        match self.payment_state.as_str() {
+            "paid" | "unpaid" if !self.payment_label.is_empty() => Some(&self.payment_label),
+            _ => None,
+        }
     }
 }
 
@@ -398,8 +411,9 @@ fn meeting_row(row: &Meeting, selected: Option<&Meeting>, next: bool) -> Line {
     let current = row.status == "current";
     let label = if current { "NOW · " } else if next { "NEXT · " } else { "" };
     let shown = selected == Some(row);
+    let pill = row.payment_badge().map_or_else(String::new, |badge| format!("  [{badge}]"));
     Line::Row {
-        text: format!("{label}{}  {}", row.time, row.title),
+        text: format!("{label}{}  {}{pill}", row.time, row.title),
         current: current || shown,
         act: Some(Act::Select(Box::new(row.clone()))),
     }
@@ -453,7 +467,8 @@ pub fn agenda_lines(agenda: &Agenda, max_rows: usize, now: f64, selected: Option
     {
         lines.push(Line::Separator);
         lines.push(text(format!("{} · {}", agenda.next_label, agenda.countdown)));
-        lines.push(text(format!("Next up: {}", next.title)));
+        let pill = next.payment_badge().map_or_else(String::new, |badge| format!("  [{badge}]"));
+        lines.push(text(format!("Next up: {}{pill}", next.title)));
         lines.push(text(next.time.clone()));
         if joinable(agenda, now) {
             lines.push(Line::Buttons(vec![("Join Zoom meeting now".to_owned(), Act::Join(Box::new(next.clone())))]));
@@ -897,6 +912,21 @@ mod tests {
         assert_eq!(agenda_cell(parse("{}").as_ref()), None);
         assert_eq!(agenda_cell(Some(&Err("boom".to_owned()))), None);
         assert_eq!(agenda_cell(None), None);
+    }
+
+    #[test]
+    fn a_booking_payment_shows_as_a_pill_for_paid_and_unpaid_only() {
+        let parse = |raw: &str| Some(parse_agenda(raw));
+        let paid = parse(r#"{"next_label": "10:00 AM", "next": {"title": "Sync", "status": "upcoming",
+            "payment_label": "$Paid", "payment_state": "paid"}}"#);
+        assert_eq!(agenda_cell(paid.as_ref()).as_deref(), Some("10:00 AM · Sync [$Paid]"));
+        let unpaid = parse(r#"{"live": true, "next": {"title": "Sync", "status": "current",
+            "payment_label": "unpaid", "payment_state": "unpaid"}}"#);
+        assert_eq!(agenda_cell(unpaid.as_ref()).as_deref(), Some("Now · Sync [unpaid]"));
+        let waived = parse(r#"{"next_label": "10:00 AM", "next": {"title": "Sync", "payment_label": "waived", "payment_state": "other"}}"#);
+        assert_eq!(agenda_cell(waived.as_ref()).as_deref(), Some("10:00 AM · Sync"));
+        let row = Meeting { title: "Sync".into(), time: "9 – 10".into(), payment_label: "$Paid".into(), payment_state: "paid".into(), ..Meeting::default() };
+        assert!(matches!(meeting_row(&row, None, false), Line::Row { text, .. } if text == "9 – 10  Sync  [$Paid]"));
     }
 
     #[test]
