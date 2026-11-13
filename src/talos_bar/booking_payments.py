@@ -19,6 +19,7 @@ Run ``python -m talos_bar.booking_payments`` to keep the cache fresh without the
 from __future__ import annotations
 
 import contextlib
+import http.client
 import json
 import os
 import random
@@ -223,7 +224,11 @@ class PaymentsFeed:
     def run(self) -> None:
         while not self._stop.is_set():
             # Never log: errors can carry the URL and headers.
-            with contextlib.suppress(OSError, ValueError, urllib.error.URLError):
+            # http.client.HTTPException covers IncompleteRead: a server restart cuts
+            # the chunked stream mid-read, and that must reconnect, not end the thread.
+            with contextlib.suppress(
+                OSError, ValueError, urllib.error.URLError, http.client.HTTPException
+            ):
                 self.stream_once()
             if self._stop.is_set():
                 return
@@ -290,7 +295,7 @@ class PaymentsFeed:
         except urllib.error.HTTPError as err:
             err.close()
             return False  # 304 Not Modified lands here too
-        except (OSError, ValueError, urllib.error.URLError):
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
             return False
         if not isinstance(body, dict):
             return False

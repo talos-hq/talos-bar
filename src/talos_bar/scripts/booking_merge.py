@@ -68,6 +68,14 @@ def payment_state(raw: dict[str, object]) -> tuple[str, str]:
     return label or status, "other"
 
 
+def event_type_title(value: object) -> str:
+    """The server sends ``{"slug", "title"}``; a bare string is accepted too."""
+    if isinstance(value, dict):
+        title = value.get("title") or value.get("slug")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        return str(title or "").strip()  # pyright: ignore[reportUnknownArgumentType]
+    return str(value or "").strip() if isinstance(value, str) else ""
+
+
 def parse_bookings(snapshot: object) -> list[Booking]:
     """The usable bookings in a snapshot; malformed entries are skipped."""
     if not isinstance(snapshot, dict):
@@ -93,7 +101,7 @@ def parse_bookings(snapshot: object) -> list[Booking]:
                 end=end if end is not None and end > start else start + 1800,
                 name=str(raw.get("name") or "").strip(),
                 email=str(raw.get("email") or "").strip().lower(),
-                event_type=str(raw.get("event_type") or "").strip(),
+                event_type=event_type_title(raw.get("event_type")),  # pyright: ignore[reportUnknownArgumentType]
                 status=status,
                 label=label,
                 state=state,

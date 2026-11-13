@@ -186,6 +186,39 @@ def test_run_loop_reconnects_after_the_stream_ends(tmp_path: Path) -> None:
     assert streams[2]["last-event-id"] == "v2"
 
 
+def test_run_loop_survives_a_chunked_stream_cut_mid_chunk(tmp_path: Path) -> None:
+    """A server restart cuts the chunked stream mid-read (http.client.IncompleteRead,
+    not an OSError); the thread must reconnect rather than die."""
+    versions = iter(["v1", "v2", "v3"])
+
+    def script(h: Handler) -> None:
+        if h.path.startswith("/api/bar/bookings"):
+            h.send_response(304)
+            h.end_headers()
+            return
+        h.protocol_version = "HTTP/1.1"
+        h.send_response(200)
+        h.send_header("Content-Type", "text/event-stream")
+        h.send_header("Transfer-Encoding", "chunked")
+        h.end_headers()
+        body = _sse(next(versions, "v3")).encode()
+        h.wfile.write(f"{len(body):x}\r\n".encode() + body + b"\r\n")
+        h.wfile.write(b"400\r\npartial")  # promises 1024 bytes, then the server dies
+        h.wfile.flush()
+        h.close_connection = True
+
+    with server(script) as url:
+        feed, got = _feed(url, tmp_path, backoff_base=0.01, backoff_max=0.02)
+        feed.start()
+        deadline = time.monotonic() + 5
+        while len(got) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        alive = feed._thread is not None and feed._thread.is_alive()  # pyright: ignore[reportPrivateUsage]
+        feed.stop()
+    assert [g["version"] for g in got[:2]] == ["v1", "v2"]
+    assert alive
+
+
 def test_silent_stream_is_dead_after_idle_timeout(tmp_path: Path) -> None:
     with server(lambda h: h.send_sse(_sse("v1"), hold=1.0)) as url:
         feed, got = _feed(url, tmp_path, idle_timeout=0.2)

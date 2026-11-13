@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from booking_merge import Booking, load_bookings, match, parse_bookings, payment_state
+from booking_merge import Booking, booking_title, load_bookings, match, parse_bookings, payment_state
 from calendar_agenda import agenda_with_bookings
 from calendar_ical import IcalEvent, parse_events
 
@@ -19,7 +19,8 @@ def booking(**kw: object) -> dict[str, object]:
         "end_utc": "2026-10-22T20:00:00Z",
         "name": "Ada Lovelace",
         "email": "Ada@Example.com",
-        "event_type": "Consultation",
+        # The server's shape (/api/bar/bookings): an object, not a string.
+        "event_type": {"slug": "consultation", "title": "Consultation"},
         "status": "confirmed",
         "payment_status": "paid",
         "paid": True,
@@ -56,6 +57,16 @@ def test_parse_skips_cancelled_and_malformed() -> None:
     assert got[0].email == "ada@example.com"
     assert got[0].start == T
     assert parse_bookings({"nope": 1}) == []
+
+
+def test_event_type_object_and_string_titles() -> None:
+    (one,) = parse_bookings({"bookings": [booking()]})
+    assert one.event_type == "Consultation"
+    assert booking_title(one) == "Consultation: Ada Lovelace"
+    (slug_only,) = parse_bookings({"bookings": [booking(event_type={"slug": "x-y"})]})
+    assert slug_only.event_type == "x-y"
+    (plain,) = parse_bookings({"bookings": [booking(event_type="Chat")]})
+    assert booking_title(plain) == "Chat: Ada Lovelace"
 
 
 def test_match_by_email_within_five_minutes() -> None:
