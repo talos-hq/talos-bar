@@ -226,9 +226,7 @@ class PaymentsFeed:
             # Never log: errors can carry the URL and headers.
             # http.client.HTTPException covers IncompleteRead: a server restart cuts
             # the chunked stream mid-read, and that must reconnect, not end the thread.
-            with contextlib.suppress(
-                OSError, ValueError, urllib.error.URLError, http.client.HTTPException
-            ):
+            with contextlib.suppress(OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
                 self.stream_once()
             if self._stop.is_set():
                 return
