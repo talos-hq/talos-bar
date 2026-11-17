@@ -15,6 +15,8 @@ dependencies = [
 
 [project.scripts]
 talos-bar = "talos_bar.__main__:main"
+# The agent interface to TASKS.md; see docs/agents/tasks-md/SKILL.md.
+talos-tasks = "talos_bar.tasks_md:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6", "basedpyright>=1.20"]

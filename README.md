@@ -29,6 +29,32 @@ the file, saving stops with a conflict instead of overwriting that change.
 Review or copy your draft before discarding it. Drafts are not a substitute for
 a successful save and do not survive restarting the bar.
 
+## Agents and TASKS.md
+
+Agents (Hermes, Claude, clud) use `talos-tasks` to read and update the same file.
+It prints JSON and addresses each item by a content id that stays the same across
+ticks, notes and edits to other parts of the file. An agent only flips one
+checkbox or adds and removes its own note lines, for example:
+
+```markdown
+- [ ] ship the bar
+  * **hermes** 2026-11-17: claimed (session `abc`)
+```
+
+Each write takes the tasks lock, which the editor's save also takes, and replaces
+the file atomically. It is committed locally with `Agent:` and `Session:` trailers.
+When an agent writes while the editor holds a draft, the next save merges the two
+and stops only if both changed the same line. The tab shows a `⚙N` badge for open
+items an agent has claimed.
+
+The rules and every command are in
+[docs/agents/tasks-md/SKILL.md](docs/agents/tasks-md/SKILL.md). Hermes loads it as
+a skill:
+
+```sh
+ln -s "$PWD/docs/agents/tasks-md" ~/.hermes/skills/productivity/tasks-md
+```
+
 ## Development
 
 ```sh
