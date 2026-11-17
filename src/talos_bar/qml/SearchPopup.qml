@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import QtQuick.Window
 
 // Super+Space search: a frameless, centered box. Typing queries talos-searchd; Enter
-// activates the selected hit; Escape or losing focus hides it. Holding the mic button (or
+// activates the selected hit; Tab completes a go/ link name into the field (the selected
+// completion, else the best one); Escape or losing focus hides it. Holding the mic button (or
 // Ctrl+M, press again to stop) dictates through talos-vox into the field.
 Window {
     id: win
@@ -83,6 +84,14 @@ Window {
                     Keys.onEscapePressed: win.close()
                     Keys.onDownPressed: list.incrementCurrentIndex()
                     Keys.onUpPressed: list.decrementCurrentIndex()
+                    Keys.onTabPressed: (event) => {
+                        const completed = search.completion(list.currentIndex, text)
+                        if (completed) {
+                            text = completed
+                            cursorPosition = completed.length
+                        }
+                        event.accepted = true
+                    }
                     onAccepted: win.activate(list.currentIndex)
                     Shortcut {
                         sequence: "Ctrl+M"

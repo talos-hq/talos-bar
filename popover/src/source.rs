@@ -16,6 +16,9 @@ pub struct Hit {
     pub title: String,
     #[serde(default)]
     pub subtitle: String,
+    /// What Tab puts in the query box (a go/ link completion), when the daemon offers it.
+    #[serde(default)]
+    pub complete: Option<String>,
 }
 
 /// The popover's view of the search backend.
@@ -211,7 +214,7 @@ mod tests {
         let (address, server) = serve_once("protocol");
         let mut client = Searchd::new(address).expect("client");
         let hits = client.query("fire").expect("query");
-        assert_eq!(hits, vec![Hit { id: "app:firefox.desktop".into(), title: "Firefox".into(), subtitle: "Web Browser".into() }]);
+        assert_eq!(hits, vec![Hit { id: "app:firefox.desktop".into(), title: "Firefox".into(), subtitle: "Web Browser".into(), complete: None }]);
         assert!(client.activate("app:firefox.desktop").expect("activate"));
         assert!(!client.activate("app:nope").expect("activate"));
         drop(client);
