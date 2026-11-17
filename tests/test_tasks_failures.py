@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -176,3 +177,59 @@ def test_editor_commit_leaves_unrelated_staged_work(
         check=True,
     )
     assert status.stdout == "A  unrelated.txt\n"
+
+
+def test_agent_write_during_a_draft_merges_and_survives_later_saves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for key, value in (("user.name", "Test"), ("user.email", "test@example.com")):
+        subprocess.run(["git", "-C", str(tmp_path), "config", key, value], check=True)
+    base = "# t\n\n- [ ] one\n- [ ] two\n\n# notes\n\nprose\n"
+    (tmp_path / "TASKS.md").write_text(base)
+    monkeypatch.setenv("TASKS_REPO", str(tmp_path))
+    monkeypatch.delenv("TALOS_BAR_TASKS_CMD", raising=False)
+    glue.forget_scripts()
+    items = glue.load_file(Path(__file__).parents[1] / "src/talos_bar/glue/builtin/tasks.py")
+    save = next(i for i in items if i.id == "tasks").actions["save"]
+    ctx = glue.Context()
+    from talos_bar import tasks_md
+
+    # The human's first save, then an agent note lands while they keep typing.
+    first = base.replace("prose\n", "prose, edited\n")
+    save(ctx, json.dumps({"text": first, "base": base}))
+    one = next(it.id for it in tasks_md.parse(first).items if it.text == "one")
+    assert tasks_md.main(["note", one, "agent was here", "--agent", "hermes"]) == 0
+    # The editor still holds the old base: its draft must merge, not overwrite.
+    second = first.replace("prose, edited\n", "prose, edited twice\n")
+    save(ctx, json.dumps({"text": second, "base": base}))
+    text = (tmp_path / "TASKS.md").read_text()
+    assert "agent was here" in text and "prose, edited twice\n" in text
+    third = second.replace("- [ ] two\n", "- [ ] two!\n")
+    save(ctx, json.dumps({"text": third, "base": base}))
+    text = (tmp_path / "TASKS.md").read_text()
+    assert "agent was here" in text and "- [ ] two!\n" in text and "edited twice" in text
+    # An agent change to the very line the draft edits still stops the save.
+    two = next(it.id for it in tasks_md.parse(text).items if it.text == "two!")
+    assert tasks_md.main(["done", two, "--agent", "hermes"]) == 0
+    with pytest.raises(RuntimeError, match="changed outside this editor"):
+        save(ctx, json.dumps({"text": third.replace("two!", "two?"), "base": text}))
+    assert "- [x] two!\n" in (tmp_path / "TASKS.md").read_text()
+
+
+def test_tasks_cli_toggle_keeps_indent_and_counts_bulletless(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for key, value in (("user.name", "Test"), ("user.email", "test@example.com")):
+        subprocess.run(["git", "-C", str(tmp_path), "config", key, value], check=True)
+    (tmp_path / "TASKS.md").write_text("* parent\n    [ ] bare child\n  * [ ] starred\n")
+    monkeypatch.setenv("TASKS_REPO", str(tmp_path))
+    glue.forget_scripts()
+    listed = cast("dict[str, object]", json.loads(glue.run_script("tasks_cli", "list")))
+    assert listed["open"] == 2
+    glue.run_script("tasks_cli", "toggle", "0")
+    glue.run_script("tasks_cli", "toggle", "1")
+    assert (tmp_path / "TASKS.md").read_text() == "* parent\n    [x] bare child\n  * [x] starred\n"

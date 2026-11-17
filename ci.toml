@@ -77,6 +77,7 @@ tests = [
   "tests/test_search.py",
   "tests/test_tasks_failures.py",
   "tests/test_tasks_focus.py",
+  "tests/test_tasks_md.py",
   "tests/test_tasks_saves.py",
 ]
 run = ["bosn", "run", "--task", "python"]

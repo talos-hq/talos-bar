@@ -17,6 +17,7 @@ times a day. A failed sync loses nothing: the commits wait for the next.
 """
 
 import base64
+import contextlib
 import json
 import os
 import re
@@ -29,7 +30,8 @@ from markdown_it import MarkdownIt
 REPO = Path(os.environ.get("TASKS_REPO", Path.home() / "dev" / "tasks"))
 FILE = REPO / "TASKS.md"
 REMOTE = "https://github.com/zackees/tasks.git"
-TASK = re.compile(r"^\s*[-*] \[( |x|X)\] (.*)$")
+# The bullet is optional: the file also has bulletless "  [ ] text" lines.
+TASK = re.compile(r"^\s*(?:[-*+] )?\[( |x|X)\] (.*)$")
 
 
 def git(*args: str, timeout: float = 20) -> bool:
@@ -44,6 +46,24 @@ def git(*args: str, timeout: float = 20) -> bool:
     except subprocess.TimeoutExpired:
         return False
     return r.returncode == 0
+
+
+@contextlib.contextmanager
+def locked():
+    """Serialise with agents' `talos-tasks` writes (talos_bar/tasks_md.py)."""
+    git_dir = REPO / ".git"
+    path = (git_dir if git_dir.is_dir() else REPO) / "tasks.lock"
+    with open(path, "a") as fh:
+        try:
+            import fcntl
+        except ImportError:  # Windows: no agent CLI lock to share
+            yield
+            return
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def ensure_repo() -> None:
@@ -138,6 +158,24 @@ def unpushed() -> int:
         return 0
 
 
+def save64(argv: list[str]) -> int:
+    # The widget's editor: the whole file, base64-encoded.
+    text = base64.b64decode(argv[2] if len(argv) > 2 else "").decode()
+    current = FILE.read_text() if FILE.exists() else ""
+    if len(argv) > 3:
+        expected = base64.b64decode(argv[3]).decode()
+        if current != expected and current != text:
+            raise RuntimeError("TASKS.md changed outside this editor; draft kept")
+    if current != text or not FILE.exists():
+        FILE.write_text(text)
+    if not git("add", "TASKS.md"):
+        raise RuntimeError("Could not stage TASKS.md; draft kept")
+    if not git("diff", "--cached", "--quiet", "--", "TASKS.md"):
+        if not git("commit", "-q", "-m", "Edit tasks", "--only", "--", "TASKS.md"):
+            raise RuntimeError("Could not commit TASKS.md; draft kept")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ensure_repo()
     cmd = argv[1] if len(argv) > 1 else "list"
@@ -161,21 +199,8 @@ def main(argv: list[str]) -> int:
         print(FILE.read_text() if FILE.exists() else "", end="")
         return 0
     if cmd == "save64":
-        # The widget's editor: the whole file, base64-encoded.
-        text = base64.b64decode(argv[2] if len(argv) > 2 else "").decode()
-        current = FILE.read_text() if FILE.exists() else ""
-        if len(argv) > 3:
-            expected = base64.b64decode(argv[3]).decode()
-            if current != expected and current != text:
-                raise RuntimeError("TASKS.md changed outside this editor; draft kept")
-        if current != text or not FILE.exists():
-            FILE.write_text(text)
-        if not git("add", "TASKS.md"):
-            raise RuntimeError("Could not stage TASKS.md; draft kept")
-        if not git("diff", "--cached", "--quiet", "--", "TASKS.md"):
-            if not git("commit", "-q", "-m", "Edit tasks", "--only", "--", "TASKS.md"):
-                raise RuntimeError("Could not commit TASKS.md; draft kept")
-        return 0
+        with locked():
+            return save64(argv)
     lines, tasks = read()
     if cmd in ("add", "add64"):
         # add64: the widget passes text base64-encoded, so no shell quoting.
@@ -196,7 +221,8 @@ def main(argv: list[str]) -> int:
             return 1
         i, done, text = tasks[n]
         if cmd == "toggle":
-            lines[i] = f"- [{' ' if done else 'x'}] {text}"
+            # Flip only the box, keeping the indent and bullet (nesting).
+            lines[i] = re.sub(r"\[( |x|X)\]", "[ ]" if done else "[x]", lines[i], count=1)
             write(lines, f"{'Reopen' if done else 'Done'}: {text}")
         else:
             del lines[i]
