@@ -3,7 +3,8 @@
 //! Every OS touchpoint goes through kernal-api: the global hotkey, the app catalog, launching,
 //! and the IPC endpoint the Qt popup connects to. The wire protocol is one JSON object per line:
 //!
-//! - `{"op":"query","q":"fire"}` → `{"hits":[...]}`
+//! - `{"op":"query","q":"fire"}` → `{"hits":[...]}`; a hit may carry `"complete":"go/mail"`, the
+//!   text a client's Tab puts in the query box (go/ link completions, see `golinks.rs`)
 //! - `{"op":"activate","id":"app:firefox.desktop"}` → `{"ok":true}`
 //! - `{"op":"subscribe"}` → `{"ok":true}`, then `{"event":"show"}` per hotkey press
 //! - `{"op":"ping"}` → `{"ok":true}`
@@ -14,6 +15,7 @@
 //! - `{"op":"dictate","action":"stop"}` → `{"ok":true}`, then subscribers get
 //!   `{"event":"dictation","text":"..."}` once talos-vox has transcribed it
 
+mod golinks;
 mod search;
 
 use kernal_api::app_catalog::{self, AppEntry};
@@ -95,6 +97,8 @@ struct State {
     events: broadcast::Sender<serde_json::Value>,
     /// App-catalog id that opens `url:` hits, e.g. `brave-browser.desktop`.
     browser: Option<String>,
+    /// Known go/ links (links file + history), for completion.
+    go: Mutex<golinks::GoLinks>,
     vox: Vox,
 }
 
@@ -107,9 +111,19 @@ impl State {
         cached.1.clone()
     }
 
+    async fn query(&self, q: &str) -> Vec<search::Hit> {
+        let apps = self.apps().await;
+        let links = self.go.lock().await.all();
+        search::rank(q, &apps, &links, 12)
+    }
+
     async fn activate(&self, id: &str) -> bool {
         if let Some(uri) = id.strip_prefix("url:") {
-            return self.open_url(uri).await;
+            let opened = self.open_url(uri).await;
+            if opened && let Some(name) = golinks::name_of_url(uri) {
+                self.go.lock().await.record(name);
+            }
+            return opened;
         }
         let Some(app_id) = id.strip_prefix("app:") else {
             return false;
@@ -147,7 +161,7 @@ where
         }
         let reply = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Query { q }) => {
-                json!({ "hits": search::rank(&q, &state.apps().await, 12) })
+                json!({ "hits": state.query(&q).await })
             }
             Ok(Request::Activate { id }) => json!({ "ok": state.activate(&id).await }),
             Ok(Request::Ping) => json!({ "ok": true }),
@@ -233,6 +247,8 @@ async fn main() -> std::io::Result<()> {
     let mut hotkey = Some("Meta+Space".to_owned());
     let mut vox_bin = "voxtype".to_owned();
     let mut browser = None;
+    let mut go_links = golinks::default_links_path();
+    let mut go_history = golinks::default_history_path();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -241,12 +257,16 @@ async fn main() -> std::io::Result<()> {
             "--no-hotkey" => hotkey = None,
             "--browser" => browser = Some(args.next().expect("--browser takes an app id")),
             "--vox" => vox_bin = args.next().expect("--vox takes a program"),
+            "--go-links" => go_links = Some(args.next().expect("--go-links takes a file").into()),
+            "--no-go-links" => go_links = None,
+            "--go-history" => go_history = Some(args.next().expect("--go-history takes a file").into()),
+            "--no-go-history" => go_history = None,
             "--print-endpoint" => {
                 println!("{endpoint}");
                 return Ok(());
             }
             _ => {
-                eprintln!("usage: talos-searchd [--endpoint E] [--hotkey CHORD | --no-hotkey] [--vox PROGRAM] [--browser APP_ID]");
+                eprintln!("usage: talos-searchd [--endpoint E] [--hotkey CHORD | --no-hotkey] [--vox PROGRAM] [--browser APP_ID] [--go-links FILE | --no-go-links] [--go-history FILE | --no-go-history]");
                 std::process::exit(2);
             }
         }
@@ -256,6 +276,7 @@ async fn main() -> std::io::Result<()> {
         apps: Mutex::new((Instant::now(), Vec::new())),
         events: events.clone(),
         browser,
+        go: Mutex::new(golinks::GoLinks::new(go_links, go_history)),
         vox: Vox {
             bin: vox_bin,
             transcript: runtime_dir().join("talos-search-dictation.txt"),

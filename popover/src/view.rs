@@ -12,6 +12,8 @@ pub enum Action {
     None,
     Activate,
     Close,
+    /// Tab replaced the query with a completion; the results need refreshing.
+    Completed,
 }
 
 /// Selection and query, with keyboard navigation. Pure, so it is unit tested without a window.
@@ -32,6 +34,7 @@ impl Model {
             }
             Key::ArrowUp => self.selected = self.selected.saturating_sub(1),
             Key::Enter if self.selected < self.hits.len() => return Action::Activate,
+            Key::Tab => return self.complete(),
             Key::Escape => return Action::Close,
             _ => {}
         }
@@ -48,6 +51,22 @@ impl Model {
             Action::Close
         } else {
             Action::None
+        }
+    }
+
+    /// Tab: the selected hit's completion, else the first one; nothing when it is already typed.
+    fn complete(&mut self) -> Action {
+        let selected = self.hits.get(self.selected).into_iter();
+        let completion = selected
+            .chain(&self.hits)
+            .filter_map(|hit| hit.complete.as_deref())
+            .find(|c| !c.is_empty() && *c != self.query.trim());
+        match completion {
+            Some(text) => {
+                self.query = text.to_owned();
+                Action::Completed
+            }
+            None => Action::None,
         }
     }
 
@@ -105,17 +124,20 @@ impl<S: Source> Popover<S> {
 impl<S: Source> App for Popover<S> {
     fn frame(&mut self, frame: &mut Frame<'_>) {
         let mut action = Action::None;
+        let mut completed = false;
         for event in frame.events() {
             let step = match event {
                 Event::Key { key, pressed: true, .. } => self.model.key(*key),
                 Event::Focused(focused) => self.model.focus(*focused),
                 _ => Action::None,
             };
-            if step != Action::None {
-                action = step;
+            match step {
+                Action::None => {}
+                Action::Completed => completed = true,
+                step => action = step,
             }
         }
-        if frame.text_field(&mut self.model.query) {
+        if frame.text_field(&mut self.model.query) || completed {
             self.refresh();
         }
         frame.separator();
@@ -146,7 +168,7 @@ impl<S: Source> App for Popover<S> {
             (Some(index), _) => Some(index),
             (None, Action::Activate) => Some(self.model.selected),
             (None, Action::Close) => return frame.close(),
-            (None, Action::None) => None,
+            (None, Action::None | Action::Completed) => None,
         };
         if let Some(index) = target {
             self.model.selected = index;
@@ -162,7 +184,11 @@ mod tests {
     use super::*;
 
     fn hit(id: &str) -> Hit {
-        Hit { id: id.into(), title: id.into(), subtitle: String::new() }
+        Hit { id: id.into(), title: id.into(), subtitle: String::new(), complete: None }
+    }
+
+    fn go(name: &str) -> Hit {
+        Hit { complete: Some(format!("go/{name}")), ..hit(&format!("url:http://go/{name}")) }
     }
 
     #[test]
@@ -180,6 +206,24 @@ mod tests {
         assert_eq!(model.selected, 0);
         assert_eq!(model.key(Key::Enter), Action::Activate);
         assert_eq!(model.key(Key::Escape), Action::Close);
+    }
+
+    #[test]
+    fn tab_completes_the_selected_go_link_else_the_best_one() {
+        let mut model = Model { query: "go/ma".into(), ..Model::default() };
+        model.set_hits(vec![hit("url:http://go/ma"), go("maps"), go("mail")]);
+        assert_eq!(model.key(Key::Tab), Action::Completed);
+        assert_eq!(model.query, "go/maps", "the literal is selected: take the best completion");
+
+        model.query = "go/ma".into();
+        model.key(Key::ArrowDown);
+        model.key(Key::ArrowDown);
+        assert_eq!(model.key(Key::Tab), Action::Completed);
+        assert_eq!(model.query, "go/mail", "an arrowed-to completion wins");
+
+        model.set_hits(vec![hit("app:x")]);
+        assert_eq!(model.key(Key::Tab), Action::None, "nothing to complete");
+        assert_eq!(model.query, "go/mail");
     }
 
     #[test]

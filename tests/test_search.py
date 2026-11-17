@@ -122,3 +122,15 @@ def test_push_to_talk_puts_the_transcript_in_dictated(
     assert not client.listening
     assert spin_until(lambda: heard == ["open firefox"])
     assert actions == ["start", "stop"]
+
+
+def test_tab_completes_to_the_selected_go_link_else_the_best_one() -> None:
+    literal: dict[str, object] = {"id": "url:http://go/ma", "title": "Open go/ma"}
+    maps: dict[str, object] = {"id": "url:http://go/maps", "title": "go/maps", "complete": "go/maps"}
+    mail: dict[str, object] = {"id": "url:http://go/mail", "title": "go/mail", "complete": "go/mail"}
+    hits = [literal, maps, mail]
+    assert search.completion(hits, 0, "go/ma") == "go/maps", "the literal is selected: take the best"
+    assert search.completion(hits, 2, "go/ma") == "go/mail", "an arrowed-to completion wins"
+    assert search.completion(hits, 1, "go/maps") == "go/mail", "already there: the next one"
+    assert search.completion(hits, 7, "go/ma") == "go/maps", "a stale index is ignored"
+    assert search.completion([{"id": "app:x", "title": "X"}], 0, "x") == ""

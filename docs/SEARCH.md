@@ -38,6 +38,23 @@ kernal-api feature ships. All builds go through `soldr`.
 3. Holding the mic key → `talos-vox` streams partials into the query box.
 4. Enter → IPC `activate` → kernal-api launch/open (#535).
 
+## go/ link completion
+
+`go/<name>` always offers "Open go/<name>" first, so Enter opens exactly what was typed (the
+go-runner contract). Below it, `talos-searchd` lists known links that match what follows `go/`:
+prefix matches before substring matches, most opened first; `go/` alone lists the most opened.
+Tab in the popup puts the selected completion (or the best one) into the field; Enter or a
+click opens it. Completion hits carry `"complete":"go/<name>"` in the `query` reply.
+
+Nothing serves a list of go/ links (they are nginx locations plus a catch-all, so every name
+resolves), so the known links come from:
+
+- the links file, `--go-links FILE` (default `$XDG_CONFIG_HOME/talos-bar/go-links`): one link
+  per line, `name [target]`, `#` comments; re-read when it changes. On NixOS, generate it from
+  the same attrset as the nginx go/ locations.
+- history, `--go-history FILE` (default `$XDG_STATE_HOME/talos-bar/go-history.json`): every
+  go/ link opened from the popup, counted. `--no-go-links` / `--no-go-history` turn either off.
+
 ## Install (NixOS)
 
 Flake package for `talos-searchd`, a systemd user unit, and plasma-manager drops KRunner's

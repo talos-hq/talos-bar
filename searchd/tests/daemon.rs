@@ -25,12 +25,18 @@ fn unique_endpoint(test: &str) -> String {
 }
 
 fn start(test: &str) -> (Daemon, Endpoint) {
+    start_with(test, &["--no-go-links", "--no-go-history"])
+}
+
+/// The daemon never reads or writes the user's go/ links: each test names its own (or none).
+fn start_with(test: &str, go: &[&str]) -> (Daemon, Endpoint) {
     let address = unique_endpoint(test);
     let endpoint = Endpoint::new(address.clone()).expect("endpoint");
     // The owner-only listener refuses a parent other users can enter.
     endpoint.ensure_owner_private_parent().expect("private parent");
     let child = Command::new(env!("CARGO_BIN_EXE_talos-searchd"))
         .args(["--no-hotkey", "--endpoint", &address])
+        .args(go)
         .spawn()
         .expect("spawn talos-searchd");
     (Daemon(child), endpoint)
@@ -111,4 +117,24 @@ fn show_reaches_subscribers_and_status_counts_them() {
     let mut event = String::new();
     BufReader::new(sub.try_clone().expect("clone")).read_line(&mut event).expect("event");
     assert_eq!(serde_json::from_str::<serde_json::Value>(&event).expect("json"), serde_json::json!({ "event": "show" }));
+}
+
+#[test]
+fn completes_go_links_from_the_links_file_and_history() {
+    let dir = std::env::temp_dir().join(format!("talos-searchd-golinks-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let links = dir.join("go-links");
+    let history = dir.join("go-history.json");
+    std::fs::write(&links, "mail https://mail.example\ncal\n").expect("links");
+    std::fs::write(&history, r#"{"maps": 4}"#).expect("history");
+    let (links, history) = (links.to_str().expect("utf-8"), history.to_str().expect("utf-8"));
+    let (_daemon, endpoint) = start_with("golinks", &["--go-links", links, "--go-history", history]);
+    let mut stream = connect(&endpoint);
+
+    let reply = request(&mut stream, r#"{"op":"query","q":"go/ma"}"#);
+    let hits = reply["hits"].as_array().expect("hits");
+    let completions: Vec<&str> = hits.iter().filter_map(|hit| hit["complete"].as_str()).collect();
+    assert_eq!(completions, ["go/maps", "go/mail"], "used first, then the file's: {reply}");
+    assert_eq!(hits[0]["id"], "url:http://go/ma", "the literal stays first");
+    let _ = std::fs::remove_dir_all(&dir);
 }

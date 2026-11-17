@@ -28,6 +28,17 @@ def endpoint() -> str:
     return str(Path(runtime) / "talos-searchd.sock")
 
 
+def completion(hits: list[dict[str, object]], index: int, text: str) -> str:
+    """What Tab puts in the query box: the selected hit's `complete` text (a go/ link name), else
+    the first hit that has one; "" when there is nothing new to complete to."""
+    selected = [hits[index]] if 0 <= index < len(hits) else []
+    for hit in selected + hits:
+        complete = hit.get("complete")
+        if isinstance(complete, str) and complete and complete != text.strip():
+            return complete
+    return ""
+
+
 class _Line(QObject):
     """One socket carrying newline-delimited JSON, reconnecting when the daemon restarts."""
 
@@ -129,6 +140,10 @@ class Search(QObject):
             self.hitsChanged.emit()
             return
         self.requests.send({"op": "query", "q": text})
+
+    @Slot(int, str, result=str)
+    def completion(self, index: int, text: str) -> str:
+        return completion(self._hits, index, text)
 
     @Slot(str)
     def activate(self, hit_id: str) -> None:
