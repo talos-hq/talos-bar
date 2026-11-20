@@ -13,11 +13,44 @@ Item {
     implicitWidth: list.implicitWidth
     implicitHeight: list.implicitHeight
     readonly property var agenda: parent ? parent.content : ({})
-    readonly property var events: agenda.events || []
+    // The row lists change only when their rows do (talos-bar#56). Every refresh
+    // (30 s, booking-feed updates, the countdown) delivers new arrays; binding the
+    // Repeaters to them rebuilt every row, scrolling the list to the top and
+    // dropping a selection in the details pane.
+    property var events: []
     readonly property int nextBookingIndex: agenda.live
         ? events.findIndex(row => row.status === "upcoming" && row.meeting) : -1
-    readonly property var done: agenda.done || []
-    readonly property var tomorrow: agenda.tomorrow || []
+    property var done: []
+    property var tomorrow: []
+    onAgendaChanged: syncRows()
+    Component.onCompleted: syncRows()
+
+    function rowKey(row) { return row ? row.start + "|" + row.title : ""; }
+    function findRow(key) {
+        if (key === "") return null;
+        const rows = root.events.concat(root.done, root.tomorrow, agenda.next ? [agenda.next] : []);
+        return rows.find(row => rowKey(row) === key) || null;
+    }
+    function syncRows() {
+        const fresh = {events: agenda.events || [], done: agenda.done || [], tomorrow: agenda.tomorrow || []};
+        const flick = listScroll.contentItem;
+        const y = flick ? flick.contentY : 0;
+        let changed = false;
+        for (const name of ["events", "done", "tomorrow"]) {
+            if (JSON.stringify(root[name]) !== JSON.stringify(fresh[name])) {
+                root[name] = fresh[name];
+                changed = true;
+            }
+        }
+        // Point the pinned/hovered meeting at this refresh's row (same meeting).
+        if (pinnedRow) pinnedRow = findRow(rowKey(pinnedRow));
+        if (focusRow) focusRow = findRow(rowKey(focusRow));
+        if (changed && flick) {
+            Qt.callLater(function() {
+                flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+            });
+        }
+    }
     readonly property bool empty: !agenda.next && events.length === 0 && done.length === 0 && tomorrow.length === 0
     readonly property string title: agenda.next ? agenda.next.title : (agenda.countdown || "")
 
@@ -26,6 +59,7 @@ Item {
     property var focusRow: null
     property var pinnedRow: null
     readonly property var shownRow: pinnedRow || focusRow
+    readonly property string detailHtml: shownRow ? fullDetails(shownRow) : ""
     readonly property real roomLeft: parent ? parent.roomLeft : 0
     readonly property real roomRight: parent ? parent.roomRight : 0
     readonly property int sideWidth: 380
@@ -55,14 +89,26 @@ Item {
         return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
     function anchor(href, label) { return '<a href="' + escapeHtml(href) + '">' + escapeHtml(label) + '</a>'; }
+    // http(s) URLs in already-escaped text become links (clickable, copyable).
+    function linkify(escaped) {
+        return escaped.replace(/https?:\/\/[^\s<>"]*[^\s<>".,;:!?)\]']/g,
+            url => '<a href="' + url + '">' + url + '</a>');
+    }
+    // Copies text without touching the details selection (row links, #56).
+    function copyText(text) {
+        rowCopy.text = text;
+        rowCopy.selectAll();
+        rowCopy.copy();
+        rowCopy.text = "";
+    }
     function fullDetails(row) {
         const parts = ["<b>" + escapeHtml(row.title) + "</b>", escapeHtml(row.time)];
-        if (row.location !== "" && row.link_kind !== "Zoom") parts.push(escapeHtml(row.location));
+        if (row.location !== "" && row.link_kind !== "Zoom") parts.push(linkify(escapeHtml(row.location)));
         if (row.link_kind === "Zoom") parts.push(anchor(row.join_url || row.url, "Join Zoom meeting"));
         const contacts = row.emails.map(a => anchor("mailto:" + a, a))
             .concat(row.phones.map(n => anchor("tel:" + n.replace(/[^\d+]/g, ""), n)));
         if (contacts.length > 0) parts.push(contacts.join("<br>"));
-        if (row.details !== "") parts.push(escapeHtml(row.details).replace(/\n/g, "<br>"));
+        if (row.details !== "") parts.push(linkify(escapeHtml(row.details)).replace(/\n/g, "<br>"));
         return parts.join("<br><br>");
     }
 
@@ -212,6 +258,8 @@ Item {
         }
 
         ScrollView {
+            id: listScroll
+            objectName: "agendaList"
             visible: root.events.length > 0 || root.done.length > 0 || root.tomorrow.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(420, eventList.implicitHeight)
@@ -291,7 +339,9 @@ Item {
                 background: null
                 padding: 0
                 width: parent ? parent.width : 0
-                text: root.shownRow ? root.fullDetails(root.shownRow) : ""
+                // Reassigned only when the HTML changes: an equal refresh keeps the
+                // selection and this pane's scroll (#56).
+                text: root.detailHtml
                 textFormat: TextEdit.RichText
                 wrapMode: Text.Wrap
                 color: Theme.text
@@ -353,6 +403,7 @@ Item {
                     }
                 }
                 TextEdit { id: linkCopy; visible: false }
+                TextEdit { id: rowCopy; visible: false }
                 HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
             }
         }
@@ -409,6 +460,13 @@ Item {
                     text: meeting.modelData.location || "Open calendar event"
                     wrapMode: Text.WordWrap
                     opacity: 0.7
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: {
+                            root.copyText(meeting.modelData.location || meeting.modelData.url);
+                            parent.ToolTip.show("Copied", 1200);
+                        }
+                    }
                 }
                 RowLayout {
                     visible: meeting.modelData.link_kind === "Zoom"
@@ -423,7 +481,16 @@ Item {
                         elide: Text.ElideRight
                         color: root.link
                         font.underline: true
+                        objectName: "agendaRowZoom"
                         TapHandler { onTapped: root.openMeeting(meeting.modelData) }
+                        // Right click copies the full link (#56).
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: {
+                                root.copyText(meeting.modelData.url);
+                                parent.ToolTip.show("Link copied", 1200);
+                            }
+                        }
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                     }
                 }
@@ -437,7 +504,15 @@ Item {
                         elide: Text.ElideRight
                         color: root.link
                         font.underline: true
+                        objectName: "agendaRowContact"
                         TapHandler { onTapped: { Qt.openUrlExternally(parent.modelData.href); bar.close(); } }
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: {
+                                root.copyText(parent.modelData.label);
+                                parent.ToolTip.show("Copied", 1200);
+                            }
+                        }
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                     }
                 }
