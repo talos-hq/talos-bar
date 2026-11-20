@@ -9,7 +9,12 @@ backoff and jitter, sending ``Last-Event-ID``. A stream silent for 60 s (the ser
 every 20 s) is treated as dead.
 
 Configuration: ``TALOS_BAR_BOOKINGS_URL`` (default https://www.zachvorhies.com) and the key
-from ``TALOS_BAR_BOOKINGS_KEY`` or the mode-600 file ``~/.config/talos-bar/bookings_key``.
+from ``TALOS_BAR_BOOKINGS_KEY``, the mode-600 file ``~/.config/talos-bar/bookings_key``, or
+the Hermes keystore file ``~/.config/hermes/talos-bar.env`` (``TALOS_BAR_BOOKINGS_KEY=`` and
+optionally ``TALOS_BAR_BOOKINGS_URL=``), in that order.
+
+``status()`` says whether the feed is connected, so the bar can show "payments offline"
+instead of silently showing no payment pills (talos-hq/talos-bar#54).
 Without a key the feature is off. Booking contents and the key are never logged.
 
 Run ``python -m talos_bar.booking_payments`` to keep the cache fresh without the Qt bar
@@ -41,6 +46,8 @@ IDLE_TIMEOUT = 60.0
 POLL_INTERVAL = 30.0
 BACKOFF_BASE = 1.0
 BACKOFF_MAX = 60.0
+# A feed with no successful contact for this long reads as offline.
+STALE_AFTER = 300.0
 
 Snapshot = dict[str, object]
 Listener = Callable[[Snapshot], None]
@@ -49,6 +56,34 @@ Listener = Callable[[Snapshot], None]
 def key_file() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "talos-bar" / "bookings_key"
+
+
+def hermes_file() -> Path:
+    """The Hermes keystore's env file for the bar (shared with the owner's agents)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "hermes" / "talos-bar.env"
+
+
+def _private_text(path: Path) -> str | None:
+    """The file's text, or None when missing or readable by group/others (like ssh)."""
+    try:
+        if path.stat().st_mode & 0o077:
+            return None
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _env_file(text: str) -> dict[str, str]:
+    """KEY=value lines; blank lines, comments and surrounding quotes ignored."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        out[name.strip()] = value.strip().strip("'\"")
+    return out
 
 
 def cache_file() -> Path:
@@ -63,25 +98,25 @@ class Config:
     cache: Path
 
 
-def load_config(env: dict[str, str] | None = None, path: Path | None = None) -> Config | None:
+def load_config(
+    env: dict[str, str] | None = None, path: Path | None = None, hermes: Path | None = None
+) -> Config | None:
     """The feed's settings, or None (feature off) when there is no usable key.
 
     A key file readable by group or others is ignored, like ssh does.
     """
     env = dict(os.environ) if env is None else env
     key = env.get("TALOS_BAR_BOOKINGS_KEY", "").strip()
+    url = env.get("TALOS_BAR_BOOKINGS_URL", "")
     if not key:
-        path = path or key_file()
-        try:
-            if path.stat().st_mode & 0o077:
-                return None
-            key = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
+        key = (_private_text(path or key_file()) or "").strip()
+    if not key:
+        keystore = _env_file(_private_text(hermes or hermes_file()) or "")
+        key = keystore.get("TALOS_BAR_BOOKINGS_KEY", "").strip()
+        url = url or keystore.get("TALOS_BAR_BOOKINGS_URL", "")
     if not key:
         return None
-    url = (env.get("TALOS_BAR_BOOKINGS_URL") or DEFAULT_URL).rstrip("/")
-    return Config(base_url=url, key=key, cache=cache_file())
+    return Config(base_url=(url or DEFAULT_URL).rstrip("/"), key=key, cache=cache_file())
 
 
 # ── Server-sent events ───────────────────────────────────────────────────────────────────
@@ -171,6 +206,10 @@ def write_atomic(path: Path, snapshot: Snapshot) -> None:
 Opener = Callable[[urllib.request.Request, float], HTTPResponse]
 
 
+def _http_error(code: int) -> str:
+    return "key_rejected" if code in (401, 403) else "unreachable"
+
+
 def _urlopen(request: urllib.request.Request, timeout: float) -> HTTPResponse:
     return cast("HTTPResponse", urllib.request.urlopen(request, timeout=timeout))
 
@@ -202,6 +241,10 @@ class PaymentsFeed:
         self.snapshot: Snapshot | None = None
         self.failures = 0
         self.last_poll = float("-inf")
+        # Connection health for status(): when a snapshot last arrived or was confirmed
+        # unchanged, and why the last attempt failed ("key_rejected" / "unreachable").
+        self.last_ok = float("-inf")
+        self.error = ""
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -226,8 +269,13 @@ class PaymentsFeed:
             # Never log: errors can carry the URL and headers.
             # http.client.HTTPException covers IncompleteRead: a server restart cuts
             # the chunked stream mid-read, and that must reconnect, not end the thread.
-            with contextlib.suppress(OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+            try:
                 self.stream_once()
+            except urllib.error.HTTPError as err:
+                err.close()
+                self.error = _http_error(err.code)
+            except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+                self.error = "unreachable"
             if self._stop.is_set():
                 return
             self.failures += 1
@@ -269,6 +317,7 @@ class PaymentsFeed:
             if response.status != 200:
                 raise ValueError("stream refused")
             self.failures = 0
+            self.mark_ok()
             # The socket timeout bounds every read, so a silent stream raises TimeoutError.
             for line in iter_lines(response.readline):
                 if self._stop.is_set():
@@ -292,12 +341,33 @@ class PaymentsFeed:
                 body = cast("object", json.loads(response.read()))
         except urllib.error.HTTPError as err:
             err.close()
-            return False  # 304 Not Modified lands here too
-        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+            if err.code == 304:  # Not Modified: the feed is healthy
+                self.mark_ok()
+            else:
+                self.error = _http_error(err.code)
             return False
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+            self.error = "unreachable"
+            return False
+        self.mark_ok()
         if not isinstance(body, dict):
             return False
         return self.accept(cast("Snapshot", body), "")
+
+    def mark_ok(self) -> None:
+        self.last_ok = time.monotonic()
+        self.error = ""
+
+    def status(self, now: float | None = None) -> tuple[str, str]:
+        """``(state, reason)``: ("ok", "") or ("offline", why) for the bar to show."""
+        now = time.monotonic() if now is None else now
+        if self.error == "key_rejected":
+            return "offline", "key rejected"
+        if now - self.last_ok <= STALE_AFTER:
+            return "ok", ""
+        if self.error:
+            return "offline", "server unreachable"
+        return "connecting", ""
 
     def accept(self, snapshot: object, event_id: str) -> bool:
         """Keep a snapshot, write the cache and tell the listener; False for a bad or stale one."""
@@ -351,10 +421,24 @@ def ensure_started(name: str = "", listener: Listener | None = None) -> Payments
     return _feed
 
 
+def status() -> tuple[str, str]:
+    """``(state, reason)`` of the process-wide feed: "ok", "connecting" or "offline".
+
+    "offline" carries why: "no key" (nothing configured), "key rejected" (401/403) or
+    "server unreachable" (no contact for STALE_AFTER seconds).
+    """
+    if _feed is None:
+        return ("offline", "no key") if load_config() is None else ("connecting", "")
+    return _feed.status()
+
+
 def main() -> int:
     config = load_config()
     if config is None:
-        print("booking payments: no key; set TALOS_BAR_BOOKINGS_KEY or ~/.config/talos-bar/bookings_key")
+        print(
+            "booking payments: no key; set TALOS_BAR_BOOKINGS_KEY, ~/.config/talos-bar/bookings_key"
+            " or ~/.config/hermes/talos-bar.env"
+        )
         return 1
     feed = PaymentsFeed(config)
     try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.error
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -285,7 +286,7 @@ def test_server_retry_sets_the_minimum_delay(tmp_path: Path) -> None:
 
 
 def test_config_env_key_and_default_url() -> None:
-    config = bp.load_config({"TALOS_BAR_BOOKINGS_KEY": "k"}, Path("/nonexistent"))
+    config = bp.load_config({"TALOS_BAR_BOOKINGS_KEY": "k"}, Path("/nonexistent"), Path("/nonexistent"))
     assert config is not None
     assert (config.base_url, config.key) == ("https://www.zachvorhies.com", "k")
 
@@ -294,12 +295,76 @@ def test_config_key_file_must_be_private(tmp_path: Path) -> None:
     key = tmp_path / "bookings_key"
     key.write_text("filekey\n")
     key.chmod(0o644)
-    assert bp.load_config({}, key) is None
+    assert bp.load_config({}, key, Path("/nonexistent")) is None
     key.chmod(0o600)
-    config = bp.load_config({"TALOS_BAR_BOOKINGS_URL": "http://h:1/"}, key)
+    config = bp.load_config({"TALOS_BAR_BOOKINGS_URL": "http://h:1/"}, key, Path("/nonexistent"))
     assert config is not None
     assert (config.base_url, config.key) == ("http://h:1", "filekey")
 
 
 def test_no_key_turns_the_feature_off() -> None:
-    assert bp.load_config({}, Path("/nonexistent")) is None
+    assert bp.load_config({}, Path("/nonexistent"), Path("/nonexistent")) is None
+
+
+# ── Keystore fallback and status (#54) ───────────────────────────────────────────────────
+
+
+def test_config_falls_back_to_the_hermes_keystore(tmp_path: Path) -> None:
+    hermes = tmp_path / "talos-bar.env"
+    hermes.write_text("# comment\nTALOS_BAR_BOOKINGS_KEY='hkey'\nTALOS_BAR_BOOKINGS_URL=http://h:2/\n")
+    hermes.chmod(0o600)
+    config = bp.load_config({}, Path("/nonexistent"), hermes)
+    assert config is not None
+    assert (config.base_url, config.key) == ("http://h:2", "hkey")
+    # The bar's own key file wins over the keystore; a public keystore file is ignored.
+    key = tmp_path / "bookings_key"
+    key.write_text("filekey\n")
+    key.chmod(0o600)
+    assert bp.load_config({}, key, hermes).key == "filekey"  # type: ignore[union-attr]
+    hermes.chmod(0o644)
+    assert bp.load_config({}, Path("/nonexistent"), hermes) is None
+
+
+def test_status_no_key_is_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bp, "_feed", None)
+    monkeypatch.setattr(bp, "load_config", lambda: None)
+    assert bp.status() == ("offline", "no key")
+
+
+def test_status_key_rejected(tmp_path: Path) -> None:
+    def refuse(h: Handler) -> None:
+        h.send_response(401)
+        h.send_header("Content-Length", "0")
+        h.end_headers()
+
+    with server(refuse) as url:
+        feed, _ = _feed(url, tmp_path)
+        assert feed.status() == ("connecting", "")
+        assert feed.poll() is False
+        assert feed.status() == ("offline", "key rejected")
+        with pytest.raises(urllib.error.HTTPError):
+            feed.stream_once()
+
+
+def test_status_ok_then_unreachable_after_stale(tmp_path: Path) -> None:
+    with server(lambda h: h.send_json(_snap("v1"), '"v1"')) as url:
+        feed, _ = _feed(url, tmp_path)
+        assert feed.poll() is True
+        assert feed.status() == ("ok", "")
+    feed.config = Config(base_url="http://127.0.0.1:9", key="k", cache=feed.config.cache)
+    assert feed.poll() is False
+    now = time.monotonic()
+    assert feed.status(now) == ("ok", ""), "a recent success outweighs one failure"
+    assert feed.status(now + bp.STALE_AFTER + 1) == ("offline", "server unreachable")
+
+
+def test_not_modified_counts_as_healthy(tmp_path: Path) -> None:
+    def not_modified(h: Handler) -> None:
+        h.send_response(304)
+        h.end_headers()
+
+    with server(not_modified) as url:
+        feed, _ = _feed(url, tmp_path)
+        feed.etag = '"v1"'
+        assert feed.poll() is False
+        assert feed.status() == ("ok", "")

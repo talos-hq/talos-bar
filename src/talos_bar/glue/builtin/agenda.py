@@ -51,6 +51,17 @@ class Row(TypedDict):
 BADGE_COLORS = {"paid": "#2ecc71", "unpaid": "#f5c518"}
 
 
+# Shown instead of a payment pill when the booking feed is not connected (#54), so a
+# missing or rejected key is visible instead of looking like "no payment info".
+OFFLINE_COLOR = "#8a8a8a"
+
+
+def payments_offline() -> str:
+    """Why the booking payments feed is offline ("no key", ...), or "" when it is fine."""
+    state, reason = booking_payments.status()
+    return reason if state == "offline" else ""
+
+
 def badge(row: Row | None) -> tuple[str, str]:
     """``(text, colour)`` of a row's payment pill, or ``("", "")``."""
     if row is None:
@@ -77,6 +88,7 @@ class Agenda(TypedDict, total=False):
 
 class AgendaPopup(Agenda):
     component: str
+    payments_offline: str
 
 
 def _zoom_app_installed() -> bool:
@@ -128,8 +140,12 @@ if ENABLED:
             text += f"  │  Next {_hm(following['start'])}"
         out: Output = {"text": text, "icon": "view-calendar-agenda"}
         pill, color = badge(nxt)
-        if pill:
+        offline = payments_offline()
+        if pill and not offline:
             out["badge"], out["badge_color"] = pill, color
+        elif offline:
+            out["badge"], out["badge_color"] = "payments offline", OFFLINE_COLOR
+            out["tooltip"] = f"Booking payments offline: {offline}"
         if a.get("live"):
             out["dot"] = "#e5322d"
         return out
@@ -138,7 +154,7 @@ if ENABLED:
     def agenda(ctx: Context) -> AgendaPopup:
         cached = ctx.cache.get("agenda")
         a = cast("Agenda", cached) if isinstance(cached, dict) else _fetch(ctx)
-        return {**a, "component": "Agenda.qml"}
+        return {**a, "payments_offline": payments_offline(), "component": "Agenda.qml"}
 
     @action("agenda", "open_calendar")
     def open_calendar(ctx: Context, payload: str) -> None:

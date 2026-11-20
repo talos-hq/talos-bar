@@ -190,6 +190,18 @@ Item {
             }
         }
 
+        // The booking payments feed is not connected (#54): say why, so missing pills
+        // are not mistaken for "nobody paid".
+        Text_ {
+            objectName: "paymentsOffline"
+            visible: !!root.agenda.payments_offline
+            Layout.fillWidth: true
+            text: "Booking payments offline: " + (root.agenda.payments_offline || "")
+            wrapMode: Text.WordWrap
+            opacity: 0.7
+            horizontalAlignment: Text.AlignHCenter
+        }
+
         Text_ {
             visible: root.events.length === 0 && root.done.length === 0
             Layout.fillWidth: true
