@@ -136,6 +136,9 @@ def _use_desktop_theme(app: QGuiApplication) -> None:
 class Bar(QObject):
     itemsChanged = Signal()
     popupChanged = Signal()
+    # popupFocus has its own signal: pinning a hover-opened popup must not make
+    # QML re-read (and rebuild) the popup's content (talos-bar#56).
+    focusChanged = Signal()
     result = Signal(str, str, object, bool)
     actionFinished = Signal(str, str, str, bool, str)
     # glue.poke(id) from any thread; queued onto the GUI thread.
@@ -182,7 +185,7 @@ class Bar(QObject):
     def openId(self) -> str:
         return self._open
 
-    @Property(bool, notify=popupChanged)  # pyright: ignore[reportArgumentType]
+    @Property(bool, notify=focusChanged)  # pyright: ignore[reportArgumentType]
     def popupFocus(self) -> bool:
         return self._focus
 
@@ -290,6 +293,7 @@ class Bar(QObject):
         path = here if here and here.is_file() else QML_DIR / component
         url = QUrl.fromLocalFile(str(path))
         url.setQuery(f"v={self._generation}")
+        previous = self._popup
         self._popup = {**content, "component": url.toString(), "error": error}
         if item_id in self._drafts:
             self._popup.update(
@@ -301,6 +305,8 @@ class Bar(QObject):
                 saveError=item_id in self._draft_errors,
                 saveErrorMessage=self._draft_errors.get(item_id, ""),
             )
+        if self._popup == previous:
+            return  # an unchanged refresh must not make QML rebuild the popup
         self.popupChanged.emit()
 
     @Slot(str)
@@ -312,7 +318,7 @@ class Bar(QObject):
             if self._open == item_id and not self._focus:
                 # Clicking a hover-opened tab pins it and hands it the keyboard.
                 self._focus = True
-                self.popupChanged.emit()
+                self.focusChanged.emit()
             else:
                 self.toggle(item_id, focus=True)
             return
@@ -344,6 +350,7 @@ class Bar(QObject):
         self._focus = focus
         self._popup = {}
         self.popupChanged.emit()
+        self.focusChanged.emit()
         self._request_popup(it)
 
     @Slot()
@@ -352,6 +359,7 @@ class Bar(QObject):
             self._open = ""
             self._focus = False
             self.popupChanged.emit()
+            self.focusChanged.emit()
 
     @Slot(QWindow, list)
     def setInputRects(self, window: QWindow, rects: list[QRectF]) -> None:
